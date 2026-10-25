@@ -48,6 +48,7 @@ let
       linkLibraries ? [ ],
       dependencies ? [ ],
       definitions ? [ ],
+      pkgConfig ? [ (lib.getName package) ],
     }:
     {
       type = "external";
@@ -57,6 +58,7 @@ let
         linkLibraries
         dependencies
         definitions
+        pkgConfig
         ;
     };
 
@@ -72,22 +74,56 @@ let
 
       allTargets = lib.attrValues targets;
 
-      # Dependencies appear after their dependents, which matters
-      # when linking static archives.
-      closure = target: [ target ] ++ lib.concatMap closure target.dependencies;
+      normalize =
+        dependency: if lib.isDerivation dependency then external { package = dependency; } else dependency;
+
+      closure =
+        dependency:
+        let
+          target = normalize dependency;
+        in
+        [ target ] ++ lib.concatMap closure target.dependencies;
 
       dependenciesFor = target: lib.unique (lib.tail (closure target));
+
+      externalDependencies = lib.filter (dep: dep.type == "external") (lib.concatMap closure allTargets);
+
+      externalPackages = lib.unique (map (dep: dep.package) externalDependencies);
+
+      pkgConfigFor =
+        target:
+        lib.unique (
+          lib.concatMap (dep: if dep.type == "external" then dep.pkgConfig else [ ]) (closure target)
+        );
+
+      pkgConfigFlags =
+        mode: target:
+        let
+          modules = pkgConfigFor target;
+        in
+        if modules == [ ] then "" else "$$(pkg-config --${mode} ${lib.escapeShellArgs modules})";
 
       flagsFor =
         target:
         let
-          related = [ target ] ++ dependenciesFor target;
+          related = closure target;
           includes = lib.unique (lib.concatMap (t: t.includes) related);
           definitions = lib.unique (lib.concatMap (t: t.definitions) related);
         in
         lib.concatStringsSep " " (
-          (map (inc: "-I${toString inc}") includes) ++ (map (def: "-D${def}") definitions)
+          (map (inc: "-I${toString inc}") includes)
+          ++ (map (def: "-D${def}") definitions)
+          ++ [ (pkgConfigFlags "cflags" target) ]
         );
+
+      linkFlagsFor =
+        target:
+        let
+          extraLibraries = lib.concatMap (dep: if dep.type == "external" then dep.linkLibraries else [ ]) (
+            closure target
+          );
+        in
+        lib.concatStringsSep " " (extraLibraries ++ [ (pkgConfigFlags "libs" target) ]);
 
       objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
@@ -109,13 +145,16 @@ let
         let
           dependencies = dependenciesFor target;
           libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
-          inputs = objectsFor target ++ libraries;
+
+          inputs = objectsFor target ++ (if target.type == "executable" then libraries else [ ]);
+
           rule = if target.type == "library" then "archive" else "link";
         in
         ''
           ${compileRules target}
 
           build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}
+            ldflags = ${linkFlagsFor target}
           build ${target.name}: phony ${outputFor target}
         '';
 
@@ -131,7 +170,7 @@ let
           command = mkdir -p $$(dirname $out) && $$AR rcs $out $in
 
         rule link
-          command = mkdir -p $$(dirname $out) && $$CXX $in -o $out
+          command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
 
         ${lib.concatStringsSep "\n" (map targetRules allTargets)}
 
@@ -145,7 +184,12 @@ let
       inherit src;
       strictDeps = true;
 
-      nativeBuildInputs = [ pkgs.ninja ];
+      nativeBuildInputs = [
+        pkgs.ninja
+        pkgs.buildPackages.pkg-config
+      ];
+
+      buildInputs = externalPackages;
 
       dontConfigure = true;
 
@@ -176,11 +220,13 @@ let
         devShell = pkgs.mkShell {
           packages = [
             pkgs.ninja
+            pkgs.buildPackages.pkg-config
 
             (pkgs.writeShellScriptBin "build" ''
               							exec ninja -f ${ninjaFile} "$@"
               						'')
-          ];
+          ]
+          ++ externalPackages;
         };
       };
     };

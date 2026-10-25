@@ -1,11 +1,11 @@
 # nix-cpp
 
-Declarative C++ builds using Nix and Ninja, with Nix as the single source of truth for library and executable dependencies.
+Declarative C++ builds using Nix and Ninja, with Nix as the single source of truth for library and executable dependencies. Nixpkgs supplies dependencies and toolchains, while Ninja handles parallel and incremental compilation.
 
 > [!WARNING]
 > **Experimental
 >
-> nix-cpp is under active development. The public API is unstable and may change without notice. Not recommended for production use.
+> nix-cpp is under active development. The public API is unstable and may change without notice. Not recommended for production use. 
 
 ## Example
 
@@ -28,7 +28,7 @@ let
       app = cpp.executable {
         name = "app";
         sources = [ "main.cpp" ];
-        dependencies = [ math ];
+        dependencies = [ math pkgs.fmt ];
       };
     };
   };

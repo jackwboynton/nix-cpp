@@ -51,6 +51,61 @@
               };
             };
           };
+
+          external-dependencies = cpp.project {
+            name = "external-dependencies";
+            src = ./examples/external-dependencies;
+            cxxFlags = "-std=c++23 -O2";
+
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+                dependencies = [ pkgs.fmt ];
+              };
+            };
+          };
+
+          arrow = cpp.project {
+            name = "arrow";
+            src = ./examples/arrow;
+            cxxFlags = "-std=c++23 -O2";
+
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+
+                dependencies = [
+                  (cpp.external {
+                    package = pkgs.arrow-cpp;
+                    pkgConfig = [ "arrow" ];
+                  })
+                ];
+              };
+            };
+          };
+
+          duckdb = cpp.project {
+            name = "duckdb";
+            src = ./examples/duckdb;
+            cxxFlags = "-std=c++20 -O2"; # duckdb doesnt support c++23
+
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+                dependencies = [
+                  (cpp.external {
+                    package = pkgs.duckdb;
+                    pkgConfig = [ ];
+                    linkLibraries = [ "-lduckdb" ];
+                  })
+                ];
+              };
+            };
+          };
+
         };
     in
     {
@@ -86,6 +141,36 @@
               }
               ''
                 test "$(app)" = "add(20, 22) = 42"
+                touch "$out"
+              '';
+
+          external-dependencies =
+            pkgs.runCommand "test-external-dependencies"
+              {
+                nativeBuildInputs = [ examples.external-dependencies ];
+              }
+              ''
+                test "$(app)" = "Hello from fmt!"
+                touch "$out"
+              '';
+
+          arrow =
+            pkgs.runCommand "test-arrow"
+              {
+                nativeBuildInputs = [ examples.arrow ];
+              }
+              ''
+                test "$(app)" = "Arrow array length: 3"
+                touch "$out"
+              '';
+
+          duckdb =
+            pkgs.runCommand "test-duckdb"
+              {
+                nativeBuildInputs = [ examples.duckdb ];
+              }
+              ''
+                test "$(app)" = "42"
                 touch "$out"
               '';
         }
