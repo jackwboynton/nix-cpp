@@ -42,6 +42,11 @@
                 name = "math";
                 sources = [ "math.cpp" ];
                 includes = [ "inc" ];
+
+                definitions = {
+                  public = [ "MATH_PUBLIC=42" ];
+                  private = [ "MATH_PRIVATE=1234" ];
+                };
               };
 
               app = cpp.executable {

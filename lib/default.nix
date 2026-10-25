@@ -9,7 +9,10 @@ let
       sources,
       dependencies ? [ ],
       includes ? [ ],
-      definitions ? [ ],
+      definitions ? {
+        public = [ ];
+        private = [ ];
+      },
     }:
     {
       type = "library";
@@ -28,7 +31,10 @@ let
       sources,
       dependencies ? [ ],
       includes ? [ ],
-      definitions ? [ ],
+      definitions ? {
+        public = [ ];
+        private = [ ];
+      },
     }:
     {
       type = "executable";
@@ -47,7 +53,10 @@ let
       includes ? [ ],
       linkLibraries ? [ ],
       dependencies ? [ ],
-      definitions ? [ ],
+      definitions ? {
+        public = [ ];
+        private = [ ];
+      },
       pkgConfig ? [ (lib.getName package) ],
     }:
     {
@@ -107,12 +116,16 @@ let
         target:
         let
           related = closure target;
+
           includes = lib.unique (lib.concatMap (t: t.includes) related);
-          definitions = lib.unique (lib.concatMap (t: t.definitions) related);
+
+          definitions = lib.unique (
+            target.definitions.private ++ lib.concatMap (t: t.definitions.public) related
+          );
         in
         lib.concatStringsSep " " (
           (map (inc: "-I${toString inc}") includes)
-          ++ (map (def: "-D${def}") definitions)
+          ++ (map (def: "-D${lib.escapeShellArg def}") definitions)
           ++ [ (pkgConfigFlags "cflags" target) ]
         );
 
