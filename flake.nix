@@ -114,7 +114,9 @@
           objective_c = cpp.project {
             name = "objective_c";
             src = ./examples/objective_c;
-            cxxFlags = "-O2";
+            cxxFlags = "-std=c++23 -O2";
+            objcFlags = "-O2 -fobjc-arc";
+            objcxxFlags = "-fobjc-arc";
             targets = {
               app = cpp.executable {
                 name = "app";

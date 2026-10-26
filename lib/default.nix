@@ -78,6 +78,8 @@ let
       name,
       src,
       cxxFlags,
+      objcFlags ? "-O2 -fobjc-arc",
+      objcxxFlags ? "-fobjc-arc",
       targets,
     }:
     let
@@ -151,10 +153,24 @@ let
       compileRules =
         target:
         lib.concatStringsSep "\n" (
-          lib.imap0 (i: source: ''
-            build build/obj/${target.name}/${toString i}.o: compile ${toString source}
-              flags = ${flagsFor target}
-          '') target.sources
+          lib.imap0 (
+            i: source:
+            let
+              path = toString source;
+
+              languageFlags =
+                if lib.hasSuffix ".mm" path then
+                  "${cxxFlags} ${objcxxFlags}"
+                else if lib.hasSuffix ".m" path then
+                  objcFlags
+                else
+                  cxxFlags;
+            in
+            ''
+              build build/obj/${target.name}/${toString i}.o: compile ${path}
+                flags = ${languageFlags} ${flagsFor target}
+            ''
+          ) target.sources
         );
 
       targetRules =
@@ -176,10 +192,8 @@ let
         '';
 
       ninjaFile = pkgs.writeText "build.ninja" ''
-        cxxflags = ${cxxFlags}
-
         rule compile
-          command = mkdir -p $$(dirname $out) && $$CXX $cxxflags $flags -MMD -MF $out.d -c $in -o $out
+          command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
           depfile = $out.d
           deps = gcc
 
