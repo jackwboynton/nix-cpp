@@ -114,7 +114,10 @@ let
         let
           modules = pkgConfigFor target;
         in
-        if modules == [ ] then "" else "$$(pkg-config --${mode} ${lib.escapeShellArgs modules})";
+        if modules == [ ] then
+          ""
+        else
+          "$$(\"$\${PKG_CONFIG:-pkg-config}\" --${mode} ${lib.escapeShellArgs modules})";
 
       flagsFor =
         target:
@@ -216,7 +219,7 @@ let
       strictDeps = true;
 
       nativeBuildInputs = [
-        pkgs.ninja
+        pkgs.buildPackages.ninja
         pkgs.buildPackages.pkg-config
       ];
 
@@ -250,10 +253,10 @@ let
 
         devShell = pkgs.mkShell {
           packages = [
-            pkgs.ninja
+            pkgs.buildPackages.ninja
             pkgs.buildPackages.pkg-config
 
-            (pkgs.writeShellScriptBin "build" ''
+            (pkgs.buildPackages.writeShellScriptBin "build" ''
               							exec ninja -f ${ninjaFile} "$@"
               						'')
           ]
