@@ -111,6 +111,20 @@
             };
           };
 
+          objective_c = cpp.project {
+            name = "objective_c";
+            src = ./examples/objective_c;
+            cxxFlags = "-O2";
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.m" ];
+                linkFlags = [
+                  "-framework Foundation"
+                ];
+              };
+            };
+          };
         };
     in
     {
@@ -176,6 +190,15 @@
               }
               ''
                 test "$(app)" = "42"
+                touch "$out"
+              '';
+          objective_c =
+            pkgs.runCommand "test-objective-c"
+              {
+                nativeBuildInputs = [ examples.objective_c ];
+              }
+              ''
+                app 2>&1 | grep -q 'Hello from Objective-C!'
                 touch "$out"
               '';
         }

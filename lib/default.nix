@@ -35,6 +35,7 @@ let
         public = [ ];
         private = [ ];
       },
+      linkFlags ? [ ],
     }:
     {
       type = "executable";
@@ -44,6 +45,7 @@ let
         dependencies
         includes
         definitions
+        linkFlags
         ;
     };
 
@@ -136,7 +138,9 @@ let
             closure target
           );
         in
-        lib.concatStringsSep " " (extraLibraries ++ [ (pkgConfigFlags "libs" target) ]);
+        lib.concatStringsSep " " (
+          (target.linkFlags or [ ]) ++ extraLibraries ++ [ (pkgConfigFlags "libs" target) ]
+        );
 
       objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
