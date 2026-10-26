@@ -136,6 +136,28 @@
             };
           };
 
+					hello-emscripten =
+						let
+							emscripten = pkgs.emscripten;
+						in
+						cpp.project {
+							name = "hello-emscripten";
+							src = ./examples/hello;
+							cxxFlags = "-std=c++23 -O2";
+
+							toolchain = {
+								cxx = "${emscripten}/bin/em++";
+								ar = "${emscripten}/bin/emar";
+								exeSuffix = ".js";
+							};
+
+							targets = {
+								hello = cpp.executable {
+									name = "hello";
+									sources = [ "main.cpp" ];
+								};
+							};
+						};
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           objective_c = cpp.project {
@@ -155,6 +177,30 @@
             };
           };
 
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+
+          hello-mingw =
+            let
+              pkgs = nixpkgs.legacyPackages.x86_64-linux.pkgsCross.mingwW64;
+              cpp = self.lib.mkCpp pkgs;
+            in
+            cpp.project {
+              name = "hello-mingw";
+              src = ./examples/hello;
+              cxxFlags = "-std=c++23 -O2";
+
+              targets = {
+                hello = cpp.executable {
+                  name = "hello";
+                  sources = [ "main.cpp" ];
+
+                  linkFlags = nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isMinGW [
+                    "-lstdc++exp"
+                  ];
+                };
+              };
+            };
         };
     in
     {
