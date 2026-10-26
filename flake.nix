@@ -136,28 +136,53 @@
             };
           };
 
-					hello-emscripten =
-						let
-							emscripten = pkgs.emscripten;
-						in
-						cpp.project {
-							name = "hello-emscripten";
-							src = ./examples/hello;
-							cxxFlags = "-std=c++23 -O2";
+          hello-emscripten =
+            let
+              emPkgs = pkgs // {
+                stdenv = pkgs.emscriptenStdenv;
+              };
 
-							toolchain = {
-								cxx = "${emscripten}/bin/em++";
-								ar = "${emscripten}/bin/emar";
-								exeSuffix = ".js";
-							};
+              emCpp = self.lib.mkCpp emPkgs;
+            in
+            (emCpp.project {
+              name = "hello-emscripten";
+              src = ./examples/hello;
+              cxxFlags = "-std=c++23 -O2";
 
-							targets = {
-								hello = cpp.executable {
-									name = "hello";
-									sources = [ "main.cpp" ];
-								};
-							};
-						};
+              targets = {
+                hello = emCpp.executable {
+                  name = "hello";
+                  sources = [ "main.cpp" ];
+                };
+              };
+            }).overrideAttrs
+              (old: {
+                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+                  pkgs.buildPackages.nodejs
+                ];
+
+                preBuild = (old.preBuild or "") + ''
+                  			export CC="${pkgs.emscripten}/bin/emcc"
+                  			export CXX="${pkgs.emscripten}/bin/em++"
+                  			export AR="${pkgs.emscripten}/bin/emar"
+
+                  			export EM_CACHE="$TMPDIR/emscripten-cache"
+                  			mkdir -p "$EM_CACHE"
+                  		'';
+
+                checkPhase = ''
+                        runHook preCheck
+
+                  			ls -lah build/bin
+                  			file build/bin/*
+                  			echo "CXX=$CXX"
+
+                  			test "$(node build/bin/hello)" = "Hello from nix-cpp!"
+
+                        runHook postCheck
+                '';
+              });
+
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           objective_c = cpp.project {
