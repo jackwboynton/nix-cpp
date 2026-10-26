@@ -97,7 +97,7 @@ let
         in
         [ target ] ++ lib.concatMap closure target.dependencies;
 
-      dependenciesFor = target: lib.unique (lib.tail (closure target));
+      dependenciesFor = target: lib.tail (closure target);
 
       externalDependencies = lib.filter (dep: dep.type == "external") (lib.concatMap closure allTargets);
 

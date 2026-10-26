@@ -111,6 +111,33 @@
             };
           };
 
+          link_order = cpp.project {
+            name = "link_order";
+            src = ./examples/link_order;
+            cxxFlags = "-std=c++23 -O2";
+            targets = rec {
+              core = cpp.library {
+                name = "core";
+                sources = [ "core.cpp" ];
+              };
+              plugin = cpp.library {
+                name = "plugin";
+                sources = [ "plugin.cpp" ];
+                dependencies = [ core ];
+              };
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+                dependencies = [
+                  core
+                  plugin
+                ];
+              };
+            };
+          };
+
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           objective_c = cpp.project {
             name = "objective_c";
             src = ./examples/objective_c;
@@ -127,6 +154,7 @@
               };
             };
           };
+
         };
     in
     {
@@ -194,6 +222,20 @@
                 test "$(app)" = "42"
                 touch "$out"
               '';
+
+          link_order =
+            pkgs.runCommand "test-link-order"
+              {
+                nativeBuildInputs = [ examples.link_order ];
+              }
+              ''
+                test "$(app)" = "42"
+                touch "$out"
+              '';
+
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+
           objective_c =
             pkgs.runCommand "test-objective-c"
               {
@@ -203,6 +245,7 @@
                 app 2>&1 | grep -q 'Hello from Objective-C!'
                 touch "$out"
               '';
+
         }
       );
 
