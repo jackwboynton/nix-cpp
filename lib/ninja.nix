@@ -149,35 +149,75 @@ let
         let
           dependencies = dependenciesFor target;
           libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
+          assets = target.assets or [ ];
+          assetStamp = "build/bin/.${target.name}-assets";
+          assetPath = asset: if lib.hasPrefix "/" asset then asset else "./${asset}";
+          assetCopies = lib.concatStringsSep " && " (
+            map (
+              asset:
+              "rm -rf ${
+                lib.escapeShellArg ("build/bin/" + builtins.baseNameOf asset)
+              } && cp -R ${lib.escapeShellArg (assetPath asset)} build/bin"
+            ) assets
+          );
 
           inputs = objectsFor target ++ (if target.type == "executable" then libraries else [ ]);
+          assetDependency = if target.type == "executable" && assets != [ ] then " || ${assetStamp}" else "";
+          assetRule =
+            if target.type != "executable" || assets == [ ] then
+              ""
+            else
+              ''
+                build ${assetStamp}: copy_assets | always_assets
+                  copies = ${assetCopies}
+              '';
 
           rule = if target.type == "library" then "archive" else "link";
         in
         ''
           ${compileRules target}
+          ${assetRule}
 
-          build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}
+          build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${assetDependency}
             ldflags = ${linkFlagsFor target}
           build ${target.name}: phony ${outputFor target}
         '';
 
-      ninjaFile = pkgs.writeText "build.ninja" ''
-        rule compile
-          command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
-          depfile = $out.d
-          deps = gcc
+      assetNameConflict = lib.any (
+        target:
+        lib.any (
+          asset:
+          lib.elem (builtins.baseNameOf asset) (
+            map (exe: "${exe.name}${exeSuffix}") (lib.attrValues executables)
+          )
+        ) (target.assets or [ ])
+      ) (lib.attrValues executables);
 
-        rule archive
-          command = mkdir -p $$(dirname $out) && $$AR rcs $out $in
+      ninjaFile =
+        if assetNameConflict then
+          throw "cpp.project: asset directory names cannot match executable filenames"
+        else
+          pkgs.writeText "build.ninja" ''
+            rule compile
+              command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
+              depfile = $out.d
+              deps = gcc
 
-        rule link
-          command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
+            rule archive
+              command = mkdir -p $$(dirname $out) && $$AR rcs $out $in
 
-        ${lib.concatStringsSep "\n" (map targetRules allTargets)}
+            rule link
+              command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
 
-        default ${lib.concatStringsSep " " (map outputFor (lib.attrValues executables))}
-      '';
+            rule copy_assets
+              command = mkdir -p $$(dirname $out) && $copies && touch $out
+
+            build always_assets: phony
+
+            ${lib.concatStringsSep "\n" (map targetRules allTargets)}
+
+            default ${lib.concatStringsSep " " (map outputFor (lib.attrValues executables))}
+          '';
 
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
       projectDrv = pkgs.stdenv.mkDerivation {
@@ -214,6 +254,13 @@ let
             install -Dm755 ${outputFor target} "$out/bin/${target.name}${exeSuffix}"
           '') (lib.attrValues executables)}
 
+          ${lib.concatMapStrings (
+            target:
+            lib.concatMapStrings (asset: ''
+              cp -R ${lib.escapeShellArg "build/bin/${builtins.baseNameOf asset}"} "$out/bin/"
+            '') (target.assets or [ ])
+          ) (lib.attrValues executables)}
+
           runHook postInstall
         '';
 
@@ -237,21 +284,17 @@ let
                 exec ninja -f ${ninjaFile} "$@"
               '')
 
-              # Run a built executable (and pass through any arguments).
+              # Build the target if needed, then run it (and pass through any arguments).
               (pkgs.buildPackages.writeShellScriptBin "run" ''
                 target="$1"
                 shift
-                exec "build/bin/$target${exeSuffix}" "$@"
-              '')
-
-              # Run the generated test executable for a target.
-              (pkgs.buildPackages.writeShellScriptBin "test" ''
-                target="$1"
-                shift
-                exec "build/bin/$target-tests${exeSuffix}" "$@"
+                ninja -f ${ninjaFile} "$target" && exec "build/bin/$target${exeSuffix}" "$@"
               '')
             ]
             ++ externalPackages;
+            shellHook = ''
+              complete -W ${lib.escapeShellArg (lib.concatStringsSep " " (lib.attrNames expandedTargets))} run build
+            '';
           };
         };
       };

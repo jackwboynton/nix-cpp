@@ -185,6 +185,19 @@
                 '';
               });
 
+          assets = cpp.project {
+            name = "assets";
+            src = ./examples/assets;
+            cxxFlags = "-std=c++23 -O2";
+
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+                assets = [ "assets" ];
+              };
+            };
+          };
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           objective_c = cpp.project {
@@ -308,6 +321,15 @@
                 touch "$out"
               '';
 
+          assets =
+            pkgs.runCommand "test-assets"
+              {
+                nativeBuildInputs = [ examples.assets ];
+              }
+              ''
+                test "$(app)" = "HELLO"
+                touch "$out"
+              '';
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
 

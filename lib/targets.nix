@@ -40,6 +40,7 @@ let
       },
       linkFlags ? [ ],
       testSources ? [ ],
+      assets ? [ ],
     }:
     {
       type = "executable";
@@ -51,6 +52,7 @@ let
         definitions
         linkFlags
         testSources
+        assets
         ;
     };
 

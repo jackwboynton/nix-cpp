@@ -50,8 +50,9 @@ define `main`). Add any production sources they need explicitly to `testSources`
 
 Test executables are built and installed like any other executable and are
 available in `project.targets` and through `build <name>-tests` in the development
-shell. Run them with `test <name>` there. An empty `testSources` list does not
-create a target.
+shell. Run them with `run <name>-tests`; this builds the target if needed before
+running it. In the Bash devshell, `run` and `build` tab-complete target names. An
+empty `testSources` list does not create a target.
 
 ## Design principles
 
