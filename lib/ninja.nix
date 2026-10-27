@@ -4,17 +4,35 @@ let
   inherit (pkgs) lib;
   inherit (targetsLib) external;
 
-  project =
-    {
-      name,
-      src,
-      cxxFlags,
-			version ? "0.1.0",
-      objcFlags ? "-O2 -fobjc-arc",
-      objcxxFlags ? "-fobjc-arc",
-      targets,
-    }:
+  targetAliasesFor =
+    targets:
     let
+      names = map (target: target.name) (lib.attrValues targets);
+    in
+    if lib.length (lib.unique names) != lib.length names then
+      throw "cpp.project: target names must be unique"
+    else
+      lib.listToAttrs (
+        lib.mapAttrsToList (key: target: {
+          name = target.name;
+          value = key;
+        }) targets
+      );
+
+  project = projectArgs: buildProject projectArgs (targetAliasesFor projectArgs.targets);
+
+  buildProject =
+    projectArgs: targetAliases:
+    let
+      inherit (projectArgs)
+        name
+        src
+        cxxFlags
+        targets
+        ;
+      version = projectArgs.version or "0.1.0";
+      objcFlags = projectArgs.objcFlags or "-O2 -fobjc-arc";
+      objcxxFlags = projectArgs.objcxxFlags or "-fobjc-arc";
       # A test target is the same as an explicitly declared sibling executable.
       # Libraries link against the library under test; executables cannot be
       # linked, so their tests inherit their dependencies but not their sources.
@@ -54,7 +72,21 @@ let
       allTargets = lib.attrValues expandedTargets;
 
       normalize =
-        dependency: if lib.isDerivation dependency then external { package = dependency; } else dependency;
+        dependency:
+        if lib.isDerivation dependency then
+          external { package = dependency; }
+        else if (dependency.type or "") == "external" then
+          dependency
+        else if lib.hasAttr (dependency.name or "") targetAliases then
+          let
+            key = targetAliases.${dependency.name};
+          in
+          if lib.hasAttr key expandedTargets then
+            expandedTargets.${key}
+          else
+            throw "cpp.project: dependency '${dependency.name}' refers to a removed target"
+        else
+          dependency;
 
       closure =
         dependency:
@@ -146,7 +178,7 @@ let
         );
 
       targetRules =
-        target:
+        key: target:
         let
           dependencies = dependenciesFor target;
           libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
@@ -181,7 +213,7 @@ let
 
           build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${assetDependency}
             ldflags = ${linkFlagsFor target}
-          build ${target.name}: phony ${outputFor target}
+          build ${key}: phony ${outputFor target}
         '';
 
       assetNameConflict = lib.any (
@@ -201,26 +233,36 @@ let
           pkgs.writeText "build.ninja" ''
             rule compile
               command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
+              description = CXX $in
               depfile = $out.d
               deps = gcc
 
             rule archive
               command = mkdir -p $$(dirname $out) && $$AR rcs $out $in
+              description = AR $out
 
             rule link
               command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
+              description = LINK $out
 
             rule copy_assets
               command = mkdir -p $$(dirname $out) && $copies && touch $out
+              description = COPY_ASSETS $out
 
             build always_assets: phony
 
-            ${lib.concatStringsSep "\n" (map targetRules allTargets)}
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
 
             default ${lib.concatStringsSep " " (map outputFor (lib.attrValues executables))}
           '';
 
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
+      runCases = lib.concatStringsSep "\n" (
+        lib.mapAttrsToList (
+          key: target:
+          "  ${lib.escapeShellArg key}) executable=${lib.escapeShellArg "build/bin/${target.name}${exeSuffix}"} ;;"
+        ) executables
+      );
       projectDrv = pkgs.stdenv.mkDerivation {
         pname = name;
 
@@ -288,7 +330,11 @@ let
               (pkgs.buildPackages.writeShellScriptBin "run" ''
                 target="$1"
                 shift
-                ninja -f ${ninjaFile} "$target" && exec "build/bin/$target${exeSuffix}" "$@"
+                case "$target" in
+                ${runCases}
+                  *) echo "Unknown executable target: $target" >&2; exit 2 ;;
+                esac
+                ninja -f ${ninjaFile} "$target" && exec "$executable" "$@"
               '')
             ]
             ++ externalPackages;
@@ -299,7 +345,25 @@ let
         };
       };
     in
-    projectDrv;
+    projectDrv
+    // {
+      override =
+        changes:
+        let
+          patch = if builtins.isFunction changes then changes projectArgs else changes;
+          nextArgs = lib.recursiveUpdate projectArgs patch;
+          nextAliases = targetAliasesFor nextArgs.targets;
+          aliasConflicts = lib.filter (
+            alias: lib.hasAttr alias targetAliases && targetAliases.${alias} != nextAliases.${alias}
+          ) (lib.attrNames nextAliases);
+          aliases =
+            if aliasConflicts != [ ] then
+              throw "cpp.project: target names cannot be reused after an override"
+            else
+              targetAliases // nextAliases;
+        in
+        buildProject nextArgs aliases;
+    };
 
 in
 {
