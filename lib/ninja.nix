@@ -9,6 +9,7 @@ let
       name,
       src,
       cxxFlags,
+			version ? "0.1.0",
       objcFlags ? "-O2 -fobjc-arc",
       objcxxFlags ? "-fobjc-arc",
       targets,
@@ -222,9 +223,8 @@ let
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
       projectDrv = pkgs.stdenv.mkDerivation {
         pname = name;
-        version = "0.1.0";
 
-        inherit src;
+        inherit src version;
         strictDeps = true;
 
         nativeBuildInputs = [
