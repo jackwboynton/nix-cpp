@@ -1,6 +1,7 @@
 { lib }:
 
 let
+  # testSources expands to a sibling executable in project.
   library =
     {
       name,
@@ -12,6 +13,7 @@ let
         private = [ ];
       },
       linkFlags ? [ ],
+      testSources ? [ ],
     }:
     {
       type = "library";
@@ -22,6 +24,7 @@ let
         includes
         definitions
         linkFlags
+        testSources
         ;
     };
 
@@ -36,6 +39,7 @@ let
         private = [ ];
       },
       linkFlags ? [ ],
+      testSources ? [ ],
     }:
     {
       type = "executable";
@@ -46,6 +50,7 @@ let
         includes
         definitions
         linkFlags
+        testSources
         ;
     };
 

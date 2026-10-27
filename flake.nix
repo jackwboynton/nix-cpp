@@ -41,6 +41,7 @@
               math = cpp.library {
                 name = "math";
                 sources = [ "math.cpp" ];
+                testSources = [ "math_tests.cpp" ];
                 includes = [ "inc" ];
 
                 definitions = {
@@ -52,6 +53,7 @@
               app = cpp.executable {
                 name = "app";
                 sources = [ "main.cpp" ];
+                testSources = [ "app_tests.cpp" ];
                 dependencies = [ math ];
               };
             };
@@ -263,6 +265,8 @@
                 test "$(app)" = "add(20, 22) = 42"
                 touch "$out"
               '';
+
+          libraries-tests = examples.libraries.tests;
 
           external-dependencies =
             pkgs.runCommand "test-external-dependencies"

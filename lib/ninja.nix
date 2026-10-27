@@ -14,9 +14,43 @@ let
       targets,
     }:
     let
-      executables = lib.filterAttrs (_: target: target.type == "executable") targets;
+      # A test target is the same as an explicitly declared sibling executable.
+      # Libraries link against the library under test; executables cannot be
+      # linked, so their tests inherit their dependencies but not their sources.
+      testTargets =
+        lib.mapAttrsToList
+          (_: target: {
+            name = "${target.name}-tests";
+            value = target // {
+              type = "executable";
+              name = "${target.name}-tests";
+              sources = target.testSources or [ ];
+              dependencies = if target.type == "library" then [ target ] else target.dependencies;
+              testSources = [ ];
+            };
+          })
+          (
+            lib.filterAttrs (
+              _: target:
+              (target.type == "library" || target.type == "executable") && (target.testSources or [ ]) != [ ]
+            ) targets
+          );
 
-      allTargets = lib.attrValues targets;
+      testNames = map (testTarget: testTarget.name) testTargets;
+      existingNames = (lib.attrNames targets) ++ (map (target: target.name) (lib.attrValues targets));
+
+      expandedTargets =
+        if
+          lib.length (lib.unique testNames) != lib.length testNames
+          || lib.intersectLists testNames existingNames != [ ]
+        then
+          throw "cpp.project: generated test target names collide with existing targets or each other"
+        else
+          targets // (lib.listToAttrs testTargets);
+
+      executables = lib.filterAttrs (_: target: target.type == "executable") expandedTargets;
+
+      allTargets = lib.attrValues expandedTargets;
 
       normalize =
         dependency: if lib.isDerivation dependency then external { package = dependency; } else dependency;
@@ -146,63 +180,83 @@ let
       '';
 
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
-    in
-    pkgs.stdenv.mkDerivation {
-      pname = name;
-      version = "0.1.0";
+      projectDrv = pkgs.stdenv.mkDerivation {
+        pname = name;
+        version = "0.1.0";
 
-      inherit src;
-      strictDeps = true;
+        inherit src;
+        strictDeps = true;
 
-      nativeBuildInputs = [
-        pkgs.buildPackages.ninja
-        pkgs.buildPackages.pkg-config
-      ];
+        nativeBuildInputs = [
+          pkgs.buildPackages.ninja
+          pkgs.buildPackages.pkg-config
+        ];
 
-      buildInputs = externalPackages;
+        buildInputs = externalPackages;
 
-      dontConfigure = true;
+        dontConfigure = true;
 
-      buildPhase = ''
-        runHook preBuild
+        buildPhase = ''
+          runHook preBuild
 
-        cp ${ninjaFile} build.ninja
-        ninja -j "$NIX_BUILD_CORES"
+          cp ${ninjaFile} build.ninja
+          ninja -j "$NIX_BUILD_CORES"
 
-        runHook postBuild
-      '';
+          runHook postBuild
+        '';
 
-      installPhase = ''
-        	runHook preInstall
+        installPhase = ''
+          runHook preInstall
 
-        	mkdir -p "$out/bin"
+          mkdir -p "$out/bin"
 
-        	${
-           lib.concatMapStringsSep "\n" (target: ''
-             		install -Dm755 ${outputFor target} "$out/bin/${target.name}${exeSuffix}"
-             	'') (lib.attrValues executables)
-         }
+          ${lib.concatMapStringsSep "\n" (target: ''
+            install -Dm755 ${outputFor target} "$out/bin/${target.name}${exeSuffix}"
+          '') (lib.attrValues executables)}
 
-        	runHook postInstall
-      '';
+          runHook postInstall
+        '';
 
-      passthru = {
-        inherit targets ninjaFile;
+        passthru = {
+          targets = expandedTargets;
+          inherit ninjaFile;
 
-        devShell = pkgs.mkShell {
-          packages = [
-            pkgs.buildPackages.ninja
-            pkgs.buildPackages.pkg-config
+          tests = pkgs.runCommand "test-${name}" { } ''
+            ${lib.concatMapStringsSep "\n" (
+              testTarget: lib.escapeShellArg "${projectDrv}/bin/${testTarget.name}${exeSuffix}"
+            ) testTargets}
+            touch "$out"
+          '';
 
-            (pkgs.buildPackages.writeShellScriptBin "build" ''
-              							exec ninja -f ${ninjaFile} "$@"
-              						'')
-          ]
-          ++ externalPackages;
+          devShell = pkgs.mkShell {
+            packages = [
+              pkgs.buildPackages.ninja
+              pkgs.buildPackages.pkg-config
+
+              (pkgs.buildPackages.writeShellScriptBin "build" ''
+                exec ninja -f ${ninjaFile} "$@"
+              '')
+
+              # Run a built executable (and pass through any arguments).
+              (pkgs.buildPackages.writeShellScriptBin "run" ''
+                target="$1"
+                shift
+                exec "build/bin/$target${exeSuffix}" "$@"
+              '')
+
+              # Run the generated test executable for a target.
+              (pkgs.buildPackages.writeShellScriptBin "test" ''
+                target="$1"
+                shift
+                exec "build/bin/$target-tests${exeSuffix}" "$@"
+              '')
+            ]
+            ++ externalPackages;
+          };
         };
       };
-
-    };
+    in
+    projectDrv;
 
 in
 {
