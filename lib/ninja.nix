@@ -126,7 +126,9 @@ let
             lib.concatMap (t: t.includes) (lib.filter (t: t.type != "external") related)
           );
           externalIncludes = lib.unique (
-            lib.concatMap (t: t.includes) (lib.filter (t: t.type == "external") related)
+            lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) (
+              lib.filter (t: t.type == "external") related
+            )
           );
 
           definitions = lib.unique (
