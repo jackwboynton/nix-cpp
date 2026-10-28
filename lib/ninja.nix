@@ -122,14 +122,20 @@ let
         let
           related = closure target;
 
-          includes = lib.unique (lib.concatMap (t: t.includes) related);
+          projectIncludes = lib.unique (
+            lib.concatMap (t: t.includes) (lib.filter (t: t.type != "external") related)
+          );
+          externalIncludes = lib.unique (
+            lib.concatMap (t: t.includes) (lib.filter (t: t.type == "external") related)
+          );
 
           definitions = lib.unique (
             target.definitions.private ++ lib.concatMap (t: t.definitions.public) related
           );
         in
         lib.concatStringsSep " " (
-          (map (inc: "-I${toString inc}") includes)
+          (map (inc: "-I${toString inc}") projectIncludes)
+          ++ (map (inc: "-isystem ${toString inc}") externalIncludes)
           ++ (map (def: "-D${lib.escapeShellArg def}") definitions)
           ++ [ (pkgConfigFlags "cflags" target) ]
         );
