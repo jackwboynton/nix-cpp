@@ -281,6 +281,8 @@
 
           libraries-tests = examples.libraries.tests;
 
+          lto-parallelism = import ./tests/lto-parallelism.nix { inherit pkgs; };
+
           external-dependencies =
             pkgs.runCommand "test-external-dependencies"
               {

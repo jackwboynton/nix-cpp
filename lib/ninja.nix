@@ -148,10 +148,29 @@ let
           extraLibraries = lib.concatMap (dep: if dep.type == "external" then dep.linkLibraries else [ ]) (
             closure target
           );
+          flags = (target.linkFlags or [ ]) ++ extraLibraries;
+          options = lib.splitString " " (lib.concatStringsSep " " flags);
+          # Ninja escapes the dollar; the shell reads the builder's core budget.
+          jobs = "$\${NIX_BUILD_CORES:-1}";
+          ltoFlags =
+            if lib.elem "-fno-lto" options then
+              [ ]
+            else if
+              (pkgs.stdenv.cc.isClang or false)
+              && lib.any (flag: lib.elem flag [ "-flto" "-flto=thin" "-flto=full" ]) options
+              && !lib.any (lib.hasPrefix "-flto-jobs=") options
+            then
+              [ "-flto-jobs=${jobs}" ]
+            else if
+              (pkgs.stdenv.cc.isGNU or false)
+              && lib.elem "-flto" options
+              && !lib.any (lib.hasPrefix "-flto=") options
+            then
+              [ "-flto=${jobs}" ]
+            else
+              [ ];
         in
-        lib.concatStringsSep " " (
-          (target.linkFlags or [ ]) ++ extraLibraries ++ [ (pkgConfigFlags "libs" target) ]
-        );
+        lib.concatStringsSep " " (flags ++ ltoFlags ++ [ (pkgConfigFlags "libs" target) ]);
 
       objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
