@@ -281,6 +281,8 @@
 
           libraries-tests = examples.libraries.tests;
 
+          test-phase = import ./tests/test-phase.nix { inherit pkgs; };
+
           lto-parallelism = import ./tests/lto-parallelism.nix { inherit pkgs; };
 
           external-dependencies =

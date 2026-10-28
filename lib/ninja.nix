@@ -322,6 +322,18 @@ let
           runHook postBuild
         '';
 
+        doCheck = testTargets != [ ] && pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform;
+
+        checkPhase = ''
+          runHook preCheck
+
+          ${lib.concatMapStringsSep "\n" (
+            testTarget: lib.escapeShellArg (outputFor testTarget.value)
+          ) testTargets}
+
+          runHook postCheck
+        '';
+
         installPhase = ''
           runHook preInstall
 
