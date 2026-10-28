@@ -41,6 +41,7 @@
               math = cpp.library {
                 name = "math";
                 sources = [ "math.cpp" ];
+                testSources = [ "math_tests.cpp" ];
                 includes = [ "inc" ];
 
                 definitions = {
@@ -52,6 +53,7 @@
               app = cpp.executable {
                 name = "app";
                 sources = [ "main.cpp" ];
+                testSources = [ "app_tests.cpp" ];
                 dependencies = [ math ];
               };
             };
@@ -183,6 +185,19 @@
                 '';
               });
 
+          assets = cpp.project {
+            name = "assets";
+            src = ./examples/assets;
+            cxxFlags = "-std=c++23 -O2";
+
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+                assets = [ "assets" ];
+              };
+            };
+          };
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           objective_c = cpp.project {
@@ -264,6 +279,8 @@
                 touch "$out"
               '';
 
+          libraries-tests = examples.libraries.tests;
+
           external-dependencies =
             pkgs.runCommand "test-external-dependencies"
               {
@@ -304,6 +321,15 @@
                 touch "$out"
               '';
 
+          assets =
+            pkgs.runCommand "test-assets"
+              {
+                nativeBuildInputs = [ examples.assets ];
+              }
+              ''
+                test "$(app)" = "HELLO"
+                touch "$out"
+              '';
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
 

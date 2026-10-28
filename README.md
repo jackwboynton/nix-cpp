@@ -39,6 +39,21 @@ in
 }
 ```
 
+## Tests
+
+Set `testSources` on a library or executable to create a sibling executable named
+`<name>-tests` (for example, `math-tests`). The test sources must provide their own
+`main`. The generated target inherits includes, definitions, link flags, and
+external/internal dependencies. Library tests also link against the library under
+test; executable tests do not include the executable's sources (which may already
+define `main`). Add any production sources they need explicitly to `testSources`.
+
+Test executables are built and installed like any other executable and are
+available in `project.targets` and through `build <name>-tests` in the development
+shell. Run them with `run <name>-tests`; this builds the target if needed before
+running it. In the Bash devshell, `run` and `build` tab-complete target names. An
+empty `testSources` list does not create a target.
+
 ## Design principles
 
 1. **One source of truth.** Build targets and dependencies are declared exclusively in Nix.
