@@ -150,6 +150,7 @@ let
           );
           flags = (target.linkFlags or [ ]) ++ extraLibraries;
           options = lib.splitString " " (lib.concatStringsSep " " flags);
+          compileOptions = lib.splitString " " cxxFlags;
           # Ninja escapes the dollar; the shell reads the builder's core budget.
           jobs = "$\${NIX_BUILD_CORES:-1}";
           ltoFlags =
@@ -163,7 +164,14 @@ let
               [ "-flto-jobs=${jobs}" ]
             else if
               (pkgs.stdenv.cc.isGNU or false)
-              && lib.elem "-flto" options
+              && (
+                lib.elem "-flto" options
+                # GCC also links LTO objects implicitly, without a link-time -flto.
+                || (
+                  !(lib.elem "-fno-lto" compileOptions)
+                  && lib.any (flag: flag == "-flto" || lib.hasPrefix "-flto=" flag) compileOptions
+                )
+              )
               && !lib.any (lib.hasPrefix "-flto=") options
             then
               [ "-flto=${jobs}" ]

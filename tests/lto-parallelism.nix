@@ -36,13 +36,28 @@ assert lib.hasInfix "-flto-jobs=${jobs}" (flagsFor "clang" [ "-flto" ]);
 assert !(lib.hasInfix jobs (flagsFor "gcc" [ "-flto=2" ]));
 assert !(lib.hasInfix jobs (flagsFor "clang" [ "-flto=thin" "-flto-jobs=2" ]));
 assert !(lib.hasInfix jobs (flagsFor "clang" [ ]));
-assert !(lib.hasInfix jobs (flagsFor "gcc" [ ]));
+assert lib.hasInfix "-flto=${jobs}" (flagsFor "gcc" [ ]);
+assert
+  !(lib.hasInfix jobs (
+    ((projectFor "gcc" [ ]).override { cxxFlags = "-std=c++23 -O2"; }).ninjaFile.text
+  ));
+assert
+  lib.hasInfix "-flto=${jobs}" (
+    ((projectFor "gcc" [ ]).override { cxxFlags = "-std=c++23 -O2 -flto=auto"; }).ninjaFile.text
+  );
+assert
+  !(lib.hasInfix jobs (
+    ((projectFor "gcc" [ ]).override { cxxFlags = "-std=c++23 -O2 -flto -fno-lto"; }).ninjaFile.text
+  ));
 assert !(lib.hasInfix jobs (flagsFor "gcc" [ "-flto" "-fno-lto" ]));
 assert !(lib.hasInfix jobs (flagsFor "clang" [ "-flto" "-fno-lto" ]));
 pkgs.runCommand "test-lto-parallelism" { } ''
   test "$(${projectFor nativeCompiler [ "-flto" ]}/bin/hello)" = "Hello from nix-cpp!"
   ${lib.optionalString pkgs.stdenv.cc.isClang ''
     test "$(${projectFor "clang" [ "-flto=thin" ]}/bin/hello)" = "Hello from nix-cpp!"
+  ''}
+  ${lib.optionalString pkgs.stdenv.cc.isGNU ''
+    test "$(${projectFor "gcc" [ ]}/bin/hello)" = "Hello from nix-cpp!"
   ''}
   touch "$out"
 ''
