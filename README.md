@@ -29,6 +29,7 @@ let
         name = "app";
         sources = [ "main.cpp" ];
         dependencies = [ math pkgs.fmt ];
+        pkgConfig = [ "fmt" ];
       };
     };
   };

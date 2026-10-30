@@ -13,6 +13,8 @@ let
         private = [ ];
       },
       linkFlags ? [ ],
+      pkgConfig ? [ ],
+      linkLibraries ? [ ],
       testSources ? [ ],
     }:
     {
@@ -24,6 +26,8 @@ let
         includes
         definitions
         linkFlags
+        pkgConfig
+        linkLibraries
         testSources
         ;
     };
@@ -39,6 +43,8 @@ let
         private = [ ];
       },
       linkFlags ? [ ],
+      pkgConfig ? [ ],
+      linkLibraries ? [ ],
       testSources ? [ ],
       assets ? [ ],
     }:
@@ -51,6 +57,8 @@ let
         includes
         definitions
         linkFlags
+        pkgConfig
+        linkLibraries
         testSources
         assets
         ;
@@ -61,18 +69,20 @@ let
       package,
       includes ? [ ],
       linkLibraries ? [ ],
+      linkFlags ? [ ],
       dependencies ? [ ],
       definitions ? {
         public = [ ];
         private = [ ];
       },
-      pkgConfig ? [ (lib.getName package) ],
+      pkgConfig ? [ ],
     }:
     {
       type = "external";
       inherit
         package
         includes
+        linkFlags
         linkLibraries
         dependencies
         definitions
