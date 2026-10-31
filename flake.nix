@@ -69,6 +69,7 @@
                 name = "app";
                 sources = [ "main.cpp" ];
                 dependencies = [ pkgs.fmt ];
+                pkgConfig = [ "fmt" ];
               };
             };
           };
@@ -83,12 +84,8 @@
                 name = "app";
                 sources = [ "main.cpp" ];
 
-                dependencies = [
-                  (cpp.external {
-                    package = pkgs.arrow-cpp;
-                    pkgConfig = [ "arrow" ];
-                  })
-                ];
+                dependencies = [ pkgs.arrow-cpp ];
+                pkgConfig = [ "arrow" ];
               };
             };
           };
@@ -102,13 +99,8 @@
               app = cpp.executable {
                 name = "app";
                 sources = [ "main.cpp" ];
-                dependencies = [
-                  (cpp.external {
-                    package = pkgs.duckdb;
-                    pkgConfig = [ ];
-                    linkLibraries = [ "-lduckdb" ];
-                  })
-                ];
+                dependencies = [ pkgs.duckdb ];
+                linkLibraries = [ "duckdb" ];
               };
             };
           };

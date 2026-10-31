@@ -101,21 +101,33 @@ let
 
       externalPackages = lib.unique (map (dep: dep.package) externalDependencies);
 
-      pkgConfigFor =
-        target:
-        lib.unique (
-          lib.concatMap (dep: if dep.type == "external" then dep.pkgConfig else [ ]) (closure target)
-        );
+      pkgConfigFor = target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (closure target));
+
+      pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
 
       pkgConfigFlags =
-        mode: target:
+        mode: target: lib.optionalString (pkgConfigFor target != [ ]) "@${pkgConfigFile mode target}";
+
+      pkgConfigDependency =
+        mode: target: lib.optionalString (pkgConfigFor target != [ ]) " | ${pkgConfigFile mode target}";
+
+      pkgConfigRule =
+        target:
         let
           modules = pkgConfigFor target;
+          # Package paths in the command invalidate cached flags when dependencies change.
+          paths = lib.concatMap (dep: [
+            "${lib.getDev dep.package}/lib/pkgconfig"
+            "${lib.getDev dep.package}/share/pkgconfig"
+          ]) (lib.filter (dep: dep.type == "external") (closure target));
         in
-        if modules == [ ] then
-          ""
-        else
-          "$$(\"$\${PKG_CONFIG:-pkg-config}\" --${mode} ${lib.escapeShellArgs modules})";
+        lib.optionalString (modules != [ ]) ''
+          build ${pkgConfigFile "cflags" target} ${pkgConfigFile "libs" target}: pkg_config
+            modules = ${lib.escapeShellArgs modules}
+            pcpath = ${lib.escapeShellArg (lib.concatStringsSep ":" (lib.unique paths))}
+            cflags = ${pkgConfigFile "cflags" target}
+            libs = ${pkgConfigFile "libs" target}
+        '';
 
       flagsFor =
         target:
@@ -145,12 +157,17 @@ let
       linkFlagsFor =
         target:
         let
-          extraLibraries = lib.concatMap (dep: if dep.type == "external" then dep.linkLibraries else [ ]) (
-            closure target
+          related = closure target;
+          extraLibraries = lib.concatMap (dep: dep.linkLibraries or [ ]) related;
+          externalFlags = lib.concatMap (dep: dep.linkFlags or [ ]) (
+            lib.filter (dep: dep.type == "external") related
           );
         in
         lib.concatStringsSep " " (
-          (target.linkFlags or [ ]) ++ extraLibraries ++ [ (pkgConfigFlags "libs" target) ]
+          (target.linkFlags or [ ])
+          ++ externalFlags
+          ++ map (name: "-l${lib.escapeShellArg name}") extraLibraries
+          ++ [ (pkgConfigFlags "libs" target) ]
         );
 
       objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
@@ -179,7 +196,7 @@ let
                   cxxFlags;
             in
             ''
-              build build/obj/${target.name}/${toString i}.o: compile ${path}
+              build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target}
                 flags = ${languageFlags} ${flagsFor target}
             ''
           ) target.sources
@@ -216,10 +233,13 @@ let
           rule = if target.type == "library" then "archive" else "link";
         in
         ''
+          ${pkgConfigRule target}
           ${compileRules target}
           ${assetRule}
 
-          build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${assetDependency}
+          build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${
+            lib.optionalString (target.type == "executable") (pkgConfigDependency "libs" target)
+          }${assetDependency}
             ldflags = ${linkFlagsFor target}
           build ${key}: phony ${outputFor target}
         '';
@@ -239,6 +259,10 @@ let
           throw "cpp.project: asset directory names cannot match executable filenames"
         else
           pkgs.writeText "build.ninja" ''
+            rule pkg_config
+              command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && "$''${PKG_CONFIG:-pkg-config}" --cflags $modules > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
+              description = PKG_CONFIG $modules
+
             rule compile
               command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
               description = CXX $in
