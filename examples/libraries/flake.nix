@@ -29,7 +29,9 @@
         cpp.project {
           name = "libraries";
           src = ./.;
-          cxxFlags = "-std=c++23 -O2";
+          cxxFlags = "-std=c++23";
+          optimization = 3;
+          lto = true;
 
           targets = rec {
             math = cpp.library {

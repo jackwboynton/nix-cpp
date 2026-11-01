@@ -29,7 +29,9 @@
         cpp.project {
           name = "arrow";
           src = ./.;
-          cxxFlags = "-std=c++23 -O2";
+          optimization = 2;
+          lto = true;
+          cxxFlags = "-std=c++23";
 
           targets = {
             app = cpp.executable {
