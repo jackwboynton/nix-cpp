@@ -131,11 +131,14 @@
           mingw =
             pkgs.runCommand "check-hello-mingw"
               {
-                nativeBuildInputs = [ pkgs.wineWowPackages.stable ];
+                nativeBuildInputs = [ pkgs.wine64 ];
               }
               ''
-                export HOME="$TMPDIR"
-                export WINEPREFIX="$TMPDIR/wine"
+                # The sandbox's TMPDIR may not be owned by the build user.
+                # Wine requires a user-owned prefix (or parent to create it in).
+                export HOME="$(mktemp -d "$TMPDIR/wine-home.XXXXXX")"
+                export WINEPREFIX="$HOME/prefix"
+                mkdir -m 700 "$WINEPREFIX"
                 export WINEDEBUG=-all
                 export WINEDLLOVERRIDES="mscoree,mshtml="
 
