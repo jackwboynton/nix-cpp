@@ -105,6 +105,10 @@ let
 
       pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
 
+      devResponseFiles = map (pkgConfigFile "cflags") (
+        lib.filter (target: pkgConfigFor target != [ ]) allTargets
+      );
+
       pkgConfigFlags =
         mode: target: lib.optionalString (pkgConfigFor target != [ ]) "@${pkgConfigFile mode target}";
 
@@ -353,6 +357,7 @@ let
             packages = [
               pkgs.buildPackages.ninja
               pkgs.buildPackages.pkg-config
+              pkgs.buildPackages.jq
 
               (pkgs.buildPackages.writeShellScriptBin "build" ''
                 exec ninja -f ${ninjaFile} "$@"
@@ -371,6 +376,32 @@ let
             ]
             ++ externalPackages;
             shellHook = ''
+              # Prepare response files without compiling any sources, then expand
+              # them into the database so editors need no prior build.
+              mkdir -p build
+              if ${
+                if devResponseFiles == [ ] then "true" else
+                  "ninja -f ${ninjaFile} ${lib.escapeShellArgs devResponseFiles}"
+              }; then
+                if compiler=$(command -v "$CXX") && (set -o pipefail; ninja -f ${ninjaFile} -t compdb compile | jq --arg cxx "$compiler" ${
+                  lib.concatStringsSep " " (lib.imap0
+                    (i: path: "--rawfile flags${toString i} ${lib.escapeShellArg path}")
+                    devResponseFiles)
+                } '
+                  map(. as $entry | .command |= (
+                    ltrimstr("mkdir -p $(dirname \($entry.output)) && ")
+                    | sub("^\\$CXX"; ($cxx | @sh))
+                    ${lib.concatStringsSep "\n" (lib.imap0
+                      (i: path: "| split(${builtins.toJSON "@${path}"}) | join($flags${toString i} | rtrimstr(\"\\n\"))")
+                      devResponseFiles)}
+                  ))
+                ' > build/compile_commands.json.tmp); then
+                  mv build/compile_commands.json.tmp build/compile_commands.json
+                else
+                  rm -f build/compile_commands.json.tmp
+                  echo "Failed to generate build/compile_commands.json" >&2
+                fi
+              fi
               complete -W ${lib.escapeShellArg (lib.concatStringsSep " " (lib.attrNames expandedTargets))} run build
             '';
           };
