@@ -36,7 +36,7 @@
               name = "app";
               sources = [ "main.cpp" ];
 
-              dependencies = [ pkgs.arrow-cpp ];
+              private.dependencies = [ pkgs.arrow-cpp ];
               pkgConfig = [ "arrow" ];
             };
           };

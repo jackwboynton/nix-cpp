@@ -22,13 +22,13 @@ let
       math = cpp.library {
         name = "math";
         sources = [ "math.cpp" ];
-        includes = [ "inc" ];
+        public.includes = [ "inc" ];
       };
 
       app = cpp.executable {
         name = "app";
         sources = [ "main.cpp" ];
-        dependencies = [ math pkgs.fmt ];
+        private.dependencies = [ math pkgs.fmt ];
         pkgConfig = [ "fmt" ];
       };
     };

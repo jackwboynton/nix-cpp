@@ -3,6 +3,7 @@
 let
   inherit (pkgs) lib;
   inherit (targetsLib) external;
+  pathString = path: if builtins.isPath path then "${path}" else toString path;
 
   targetAliasesFor =
     targets:
@@ -95,6 +96,25 @@ let
         in
         [ target ] ++ lib.concatMap closure target.dependencies;
 
+      # Compile usage traverses public edges only after the first hop. Static
+      # linking still needs the complete dependency graph, including private edges.
+      publicClosure =
+        dependency:
+        let
+          target = normalize dependency;
+        in
+        lib.optional (!(target.linkOnly or false)) target
+        ++ lib.concatMap publicClosure (
+          if target.linkOnly or false then
+            [ ]
+          else if target ? public then
+            target.public.dependencies
+          else
+            target.dependencies
+        );
+
+      usageFor = target: [ target ] ++ lib.concatMap publicClosure target.dependencies;
+
       dependenciesFor = target: lib.tail (closure target);
 
       externalDependencies = lib.filter (dep: dep.type == "external") (lib.concatMap closure allTargets);
@@ -102,6 +122,8 @@ let
       externalPackages = lib.unique (map (dep: dep.package) externalDependencies);
 
       pkgConfigFor = target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (closure target));
+      compilePkgConfigFor =
+        target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (usageFor target));
 
       pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
 
@@ -124,6 +146,7 @@ let
         lib.optionalString (modules != [ ]) ''
           build ${pkgConfigFile "cflags" target} ${pkgConfigFile "libs" target}: pkg_config
             modules = ${lib.escapeShellArgs modules}
+            compile_modules = ${lib.escapeShellArgs (compilePkgConfigFor target)}
             pcpath = ${lib.escapeShellArg (lib.concatStringsSep ":" (lib.unique paths))}
             cflags = ${pkgConfigFile "cflags" target}
             libs = ${pkgConfigFile "libs" target}
@@ -132,10 +155,13 @@ let
       flagsFor =
         target:
         let
-          related = closure target;
+          related = usageFor target;
 
           projectIncludes = lib.unique (
-            lib.concatMap (t: t.includes) (lib.filter (t: t.type != "external") related)
+            target.includes
+            ++ lib.concatMap (t: if t ? public then t.public.includes else t.includes) (
+              lib.filter (t: t.type != "external") (lib.tail related)
+            )
           );
           externalIncludes = lib.unique (
             lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) (
@@ -148,8 +174,8 @@ let
           );
         in
         lib.concatStringsSep " " (
-          (map (inc: "-I${toString inc}") projectIncludes)
-          ++ (map (inc: "-isystem ${toString inc}") externalIncludes)
+          (map (inc: "-I${lib.escapeShellArg (pathString inc)}") projectIncludes)
+          ++ (map (inc: "-isystem ${lib.escapeShellArg (pathString inc)}") externalIncludes)
           ++ (map (def: "-D${lib.escapeShellArg def}") definitions)
           ++ [ (pkgConfigFlags "cflags" target) ]
         );
@@ -260,7 +286,7 @@ let
         else
           pkgs.writeText "build.ninja" ''
             rule pkg_config
-              command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && "$''${PKG_CONFIG:-pkg-config}" --cflags $modules > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
+              command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && { if [ -z "$compile_modules" ]; then :; else "$''${PKG_CONFIG:-pkg-config}" --cflags $compile_modules; fi; } > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
               description = PKG_CONFIG $modules
 
             rule compile
@@ -285,7 +311,9 @@ let
 
             ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
 
-            default ${lib.concatStringsSep " " (map outputFor (lib.attrValues executables))}
+            default ${
+              lib.concatStringsSep " " (map outputFor (lib.filter (t: t.type != "external") allTargets))
+            }
           '';
 
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
@@ -330,12 +358,57 @@ let
             cp -R build/bin/. "$out/bin/"
           fi
 
+          if [ -d build/lib ]; then
+            mkdir -p "$out/lib"
+            cp -R build/lib/. "$out/lib/"
+          fi
+
+          ${lib.concatMapStringsSep "\n" (
+            target:
+            lib.concatMapStringsSep "\n" (headers: ''
+              mkdir -p "$out/include"
+              cp -R ${lib.escapeShellArg (pathString headers)}/. "$out/include/"
+            '') (target.public.headers or [ ])
+          ) allTargets}
+
           runHook postInstall
         '';
 
         passthru = {
           targets = expandedTargets;
           inherit ninjaFile;
+
+          # Store paths, not source-tree include paths, form the installed API.
+          cppUsage =
+            let
+              libraries = lib.filter (t: t.type == "library") allTargets;
+              exported = lib.concatMap publicClosure libraries;
+              exportedExternals = lib.filter (t: t.type == "external") exported;
+              linkTargets = lib.concatMap closure libraries;
+              orderedLibraries = lib.reverseList (
+                lib.unique (lib.reverseList (lib.filter (t: t.type == "library") linkTargets))
+              );
+            in
+            {
+              includes = [
+                "${projectDrv}/include"
+              ]
+              ++ lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) exportedExternals;
+              definitions = {
+                public = lib.unique (lib.concatMap (t: t.definitions.public) exported);
+                private = [ ];
+              };
+              pkgConfig = lib.unique (lib.concatMap (t: t.pkgConfig or [ ]) exported);
+              linkFlags =
+                map (t: "${projectDrv}/lib/lib${t.name}.a") orderedLibraries
+                ++ lib.concatMap (t: t.linkFlags or [ ]) (lib.filter (t: t.type != "external") linkTargets);
+              linkLibraries = lib.concatMap (t: t.linkLibraries or [ ]) (
+                lib.filter (t: t.type != "external") linkTargets
+              );
+              dependencies = map (t: t // { linkOnly = true; }) (
+                lib.filter (t: t.type == "external") linkTargets
+              );
+            };
 
           tests = pkgs.runCommand "test-${name}" { } ''
             ${lib.concatMapStringsSep "\n" (

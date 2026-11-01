@@ -35,7 +35,7 @@
             app = cpp.executable {
               name = "app";
               sources = [ "main.cpp" ];
-              dependencies = [ pkgs.fmt ];
+              private.dependencies = [ pkgs.fmt ];
               pkgConfig = [ "fmt" ];
             };
           };

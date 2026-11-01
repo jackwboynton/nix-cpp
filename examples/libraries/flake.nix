@@ -36,19 +36,16 @@
               name = "math";
               sources = [ "math.cpp" ];
               testSources = [ "math_tests.cpp" ];
-              includes = [ "inc" ];
-
-              definitions = {
-                public = [ "MATH_PUBLIC=42" ];
-                private = [ "MATH_PRIVATE=1234" ];
-              };
+              public.includes = [ "inc" ];
+              public.definitions = [ "MATH_PUBLIC=42" ];
+              private.definitions = [ "MATH_PRIVATE=1234" ];
             };
 
             app = cpp.executable {
               name = "app";
               sources = [ "main.cpp" ];
               testSources = [ "app_tests.cpp" ];
-              dependencies = [ math ];
+              private.dependencies = [ math ];
             };
           };
         }

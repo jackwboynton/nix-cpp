@@ -38,12 +38,12 @@
             plugin = cpp.library {
               name = "plugin";
               sources = [ "plugin.cpp" ];
-              dependencies = [ core ];
+              public.dependencies = [ core ];
             };
             app = cpp.executable {
               name = "app";
               sources = [ "main.cpp" ];
-              dependencies = [
+              private.dependencies = [
                 core
                 plugin
               ];

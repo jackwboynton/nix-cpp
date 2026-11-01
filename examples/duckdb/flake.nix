@@ -35,7 +35,7 @@
             app = cpp.executable {
               name = "app";
               sources = [ "main.cpp" ];
-              dependencies = [ pkgs.duckdb ];
+              private.dependencies = [ pkgs.duckdb ];
               linkLibraries = [ "duckdb" ];
             };
           };

@@ -15,6 +15,7 @@
 
       exampleNames = [
         "hello"
+        "install"
         "arrow"
         "assets"
         "duckdb"
