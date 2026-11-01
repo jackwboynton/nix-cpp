@@ -35,7 +35,7 @@ let
         optimization = projectArgs.optimization or 2;
         lto = projectArgs.lto or false;
       };
-      
+
       version = projectArgs.version or "0.1.0";
       cxxFlags = projectArgs.cxxFlags or toolchain.languageDefaults.cxxFlags;
       objcFlags = projectArgs.objcFlags or toolchain.languageDefaults.objcFlags;
@@ -169,10 +169,14 @@ let
             touch "$out"
           '';
 
-
-
           devShell = (import ./devshell.nix { inherit pkgs; }) {
-            inherit expandedTargets executables externalPackages ninjaFile exeSuffix;
+            inherit
+              expandedTargets
+              executables
+              externalPackages
+              ninjaFile
+              exeSuffix
+              ;
             inherit (toolchain) stdenv;
           };
         };

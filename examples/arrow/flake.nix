@@ -44,7 +44,7 @@
           };
 
           cpp = nix-cpp.lib.mkCpp ltoPkgs;
-      in
+        in
         cpp.project {
           name = "arrow";
           src = ./.;

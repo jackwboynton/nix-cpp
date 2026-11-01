@@ -22,25 +22,23 @@ let
   linkFlags = lib.escapeShellArgs toolchain.linkFlags;
   archiveCommand =
     if toolchain.archiveTool == "gcc-ar" then
-      lib.escapeShellArg
-        "${toolchain.stdenv.cc}/bin/${toolchain.stdenv.cc.targetPrefix}gcc-ar"
+      lib.escapeShellArg "${lib.getBin toolchain.stdenv.cc.cc}/bin/${toolchain.stdenv.cc.targetPrefix}gcc-ar"
     else
       "$$AR";
-
 
   pkgConfigFor = target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (closure target));
   compilePkgConfigFor =
     target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (usageFor target));
 
-    pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
+  pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
 
-    pkgConfigFlags =
+  pkgConfigFlags =
     mode: target: lib.optionalString (pkgConfigFor target != [ ]) "@${pkgConfigFile mode target}";
 
-    pkgConfigDependency =
+  pkgConfigDependency =
     mode: target: lib.optionalString (pkgConfigFor target != [ ]) " | ${pkgConfigFile mode target}";
 
-    pkgConfigRule =
+  pkgConfigRule =
     target:
     let
       modules = pkgConfigFor target;
@@ -59,7 +57,7 @@ let
         libs = ${pkgConfigFile "libs" target}
     '';
 
-    flagsFor =
+  flagsFor =
     target:
     let
       related = usageFor target;
@@ -87,7 +85,7 @@ let
       ++ [ (pkgConfigFlags "cflags" target) ]
     );
 
-    linkFlagsFor =
+  linkFlagsFor =
     target:
     let
       related = closure target;
@@ -103,16 +101,16 @@ let
       ++ [ (pkgConfigFlags "libs" target) ]
     );
 
-    objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
+  objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
-    outputFor =
+  outputFor =
     target:
     if target.type == "library" then
       "build/lib/lib${target.name}.a"
     else
       "build/bin/${target.name}${exeSuffix}";
 
-    compileRules =
+  compileRules =
     target:
     lib.concatStringsSep "\n" (
       lib.imap0 (
@@ -135,7 +133,7 @@ let
       ) target.sources
     );
 
-    targetRules =
+  targetRules =
     key: target:
     let
       dependencies = dependenciesFor target;
@@ -177,7 +175,7 @@ let
       build ${key}: phony ${outputFor target}
     '';
 
-    assetNameConflict = lib.any (
+  assetNameConflict = lib.any (
     target:
     lib.any (
       asset:
@@ -185,9 +183,9 @@ let
         map (exe: "${exe.name}${exeSuffix}") (lib.attrValues executables)
       )
     ) (target.assets or [ ])
-    ) (lib.attrValues executables);
+  ) (lib.attrValues executables);
 
-    ninjaFile =
+  ninjaFile =
     if assetNameConflict then
       throw "cpp.project: asset directory names cannot match executable filenames"
     else
@@ -223,4 +221,4 @@ let
         }
       '';
 in
-  ninjaFile
+ninjaFile

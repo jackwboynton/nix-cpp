@@ -15,9 +15,7 @@ let
   runCases = lib.concatStringsSep "\n" (
     lib.mapAttrsToList (
       key: target:
-      "  ${lib.escapeShellArg key}) executable=${
-        lib.escapeShellArg "build/bin/${target.name}${exeSuffix}"
-      } ;;"
+      "  ${lib.escapeShellArg key}) executable=${lib.escapeShellArg "build/bin/${target.name}${exeSuffix}"} ;;"
     ) executables
   );
 in
@@ -39,11 +37,10 @@ in
       esac
       ninja -f ${ninjaFile} "$target" && exec "$executable" "$@"
     '')
-  ] ++ externalPackages;
+  ]
+  ++ externalPackages;
 
   shellHook = ''
-    complete -W ${
-      lib.escapeShellArg (lib.concatStringsSep " " (lib.attrNames expandedTargets))
-    } run build
+    complete -W ${lib.escapeShellArg (lib.concatStringsSep " " (lib.attrNames expandedTargets))} run build
   '';
 }

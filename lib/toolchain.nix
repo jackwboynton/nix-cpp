@@ -15,7 +15,16 @@ let
   isDarwin = base.hostPlatform.isDarwin;
 
   optimizationFlag =
-    if builtins.elem optimization [ 0 1 2 3 "s" "z" ] then
+    if
+      builtins.elem optimization [
+        0
+        1
+        2
+        3
+        "s"
+        "z"
+      ]
+    then
       "-O${toString optimization}"
     else
       throw "nix-cpp: invalid optimization level";
