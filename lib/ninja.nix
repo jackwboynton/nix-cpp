@@ -208,7 +208,7 @@ let
           dependencies = dependenciesFor target;
           libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
           assets = target.assets or [ ];
-          assetStamp = "build/bin/.${target.name}-assets";
+          assetStamp = "build/.${target.name}-assets";
           assetPath = asset: if lib.hasPrefix "/" asset then asset else "./${asset}";
           assetCopies = lib.concatStringsSep " && " (
             map (
@@ -278,7 +278,7 @@ let
               description = LINK $out
 
             rule copy_assets
-              command = mkdir -p $$(dirname $out) && $copies && touch $out
+              command = mkdir -p $$(dirname $out) build/bin && $copies && touch $out
               description = COPY_ASSETS $out
 
             build always_assets: phony
@@ -324,16 +324,11 @@ let
 
           mkdir -p "$out/bin"
 
-          ${lib.concatMapStringsSep "\n" (target: ''
-            install -Dm755 ${outputFor target} "$out/bin/${target.name}${exeSuffix}"
-          '') (lib.attrValues executables)}
-
-          ${lib.concatMapStrings (
-            target:
-            lib.concatMapStrings (asset: ''
-              cp -R ${lib.escapeShellArg "build/bin/${builtins.baseNameOf asset}"} "$out/bin/"
-            '') (target.assets or [ ])
-          ) (lib.attrValues executables)}
+          # build/bin is the runtime staging directory, including any
+          # companion files emitted by the toolchain and copied assets.
+          if [ -d build/bin ]; then
+            cp -R build/bin/. "$out/bin/"
+          fi
 
           runHook postInstall
         '';
