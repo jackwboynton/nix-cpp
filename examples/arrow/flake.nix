@@ -24,31 +24,14 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          llvm = pkgs.llvmPackages;
-
-          clang =
-            if pkgs.stdenv.hostPlatform.isDarwin then
-              llvm.clang
-            else
-              llvm.clang.override {
-                bintools = llvm.bintools;
-              };
-
-          ltoStdenv = pkgs.stdenvAdapters.withCFlags [
-            "-flto=thin"
-          ] (pkgs.overrideCC pkgs.stdenv clang);
-
-          ltoPkgs = pkgs // {
-            stdenv = ltoStdenv;
-            mkShell = pkgs.mkShell.override { stdenv = ltoStdenv; };
-          };
-
-          cpp = nix-cpp.lib.mkCpp ltoPkgs;
+          cpp = nix-cpp.lib.mkCpp pkgs;
         in
         cpp.project {
           name = "arrow";
           src = ./.;
-          cxxFlags = "-std=c++23 -O2";
+          optimization = 2;
+          lto = true;
+          cxxFlags = "-std=c++23";
 
           targets = {
             app = cpp.executable {
