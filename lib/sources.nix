@@ -40,7 +40,8 @@ let
       includes = target.includes ++ lib.concatMap (t: t.public.includes) (lib.tail related);
       headers = (target.private.headers or [ ])
         ++ lib.concatMap (t: t.public.headers or [ ]) related;
-      adjacent = lib.unique (map builtins.dirOf sources);
+      testHeaders = internalPaths ((target.testOf or { }).sources or [ ]);
+      adjacent = lib.unique (map builtins.dirOf (sources ++ testHeaders));
       assets = internalPaths (target.assets or [ ]);
     in
     lib.fileset.toSource {
