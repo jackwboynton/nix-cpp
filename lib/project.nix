@@ -132,9 +132,11 @@ let
         }
       ) expandedTargets;
 
-      projectDrv = builtins.seq ninjaFile (pkgs.buildPackages.runCommand "${name}-${version}" {
+      projectDrv = builtins.seq ninjaFile (pkgs.buildPackages.symlinkJoin {
+        name = "${name}-${version}";
         pname = name;
         inherit version;
+        paths = lib.attrValues targetPackages;
         passthru = {
           targets = expandedTargets;
           inherit ninjaFile targetPackages;
@@ -189,17 +191,7 @@ let
             inherit (toolchain) stdenv;
           };
         };
-      } ''
-        mkdir -p "$out"
-        for package in ${lib.escapeShellArgs (map toString (lib.attrValues targetPackages))}; do
-          for directory in bin lib include; do
-            if [ -d "$package/$directory" ]; then
-              mkdir -p "$out/$directory"
-              cp -R "$package/$directory/." "$out/$directory/"
-            fi
-          done
-        done
-      '');
+      });
     in
     projectDrv
     // {
