@@ -104,6 +104,8 @@ let
             ++ (projectArgs.nativeBuildInputs or [ ]);
           buildInputs = packages;
           preBuild = projectArgs.preBuild or "";
+          # Plain strip rewrites slim GCC LTO archive indexes without the plugin.
+          dontStrip = target.type == "library" && toolchain.ranlibTool == "gcc-ranlib";
           dontConfigure = true;
           passthru.ninjaFile = targetNinja;
 
