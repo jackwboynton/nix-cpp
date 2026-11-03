@@ -5,9 +5,9 @@ let
     inherit (pkgs) lib;
   };
 
-  ninja = import ./ninja.nix {
+  project = import ./project.nix {
     inherit pkgs;
     targetsLib = targets;
   };
 in
-targets // ninja
+targets // project

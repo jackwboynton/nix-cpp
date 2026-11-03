@@ -1,471 +1,224 @@
-{ pkgs, targetsLib }:
+{ pkgs }:
+
+{
+  toolchain,
+  expandedTargets,
+  executables,
+  allTargets,
+  closure,
+  usageFor,
+  dependenciesFor,
+  cxxFlags,
+  objcFlags,
+  objcxxFlags,
+  exeSuffix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (targetsLib) external;
   pathString = path: if builtins.isPath path then "${path}" else toString path;
 
-  targetAliasesFor =
-    targets:
-    let
-      names = map (target: target.name) (lib.attrValues targets);
-    in
-    if lib.length (lib.unique names) != lib.length names then
-      throw "cpp.project: target names must be unique"
+  compileFlags = lib.escapeShellArgs toolchain.compileFlags;
+  linkFlags = lib.escapeShellArgs toolchain.linkFlags;
+  archiveCommand =
+    if toolchain.archiveTool == "gcc-ar" then
+      lib.escapeShellArg "${lib.getBin toolchain.stdenv.cc.cc}/bin/${toolchain.stdenv.cc.targetPrefix}gcc-ar"
     else
-      lib.listToAttrs (
-        lib.mapAttrsToList (key: target: {
-          name = target.name;
-          value = key;
-        }) targets
+      "$$AR";
+
+  pkgConfigFor = target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (closure target));
+  compilePkgConfigFor =
+    target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (usageFor target));
+
+  pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
+
+  pkgConfigFlags =
+    mode: target: lib.optionalString (pkgConfigFor target != [ ]) "@${pkgConfigFile mode target}";
+
+  pkgConfigDependency =
+    mode: target: lib.optionalString (pkgConfigFor target != [ ]) " | ${pkgConfigFile mode target}";
+
+  pkgConfigRule =
+    target:
+    let
+      modules = pkgConfigFor target;
+      # Package paths in the command invalidate cached flags when dependencies change.
+      paths = lib.concatMap (dep: [
+        "${lib.getDev dep.package}/lib/pkgconfig"
+        "${lib.getDev dep.package}/share/pkgconfig"
+      ]) (lib.filter (dep: dep.type == "external") (closure target));
+    in
+    lib.optionalString (modules != [ ]) ''
+      build ${pkgConfigFile "cflags" target} ${pkgConfigFile "libs" target}: pkg_config
+        modules = ${lib.escapeShellArgs modules}
+        compile_modules = ${lib.escapeShellArgs (compilePkgConfigFor target)}
+        pcpath = ${lib.escapeShellArg (lib.concatStringsSep ":" (lib.unique paths))}
+        cflags = ${pkgConfigFile "cflags" target}
+        libs = ${pkgConfigFile "libs" target}
+    '';
+
+  flagsFor =
+    target:
+    let
+      related = usageFor target;
+
+      projectIncludes = lib.unique (
+        target.includes
+        ++ lib.concatMap (t: if t ? public then t.public.includes else t.includes) (
+          lib.filter (t: t.type != "external") (lib.tail related)
+        )
+      );
+      externalIncludes = lib.unique (
+        lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) (
+          lib.filter (t: t.type == "external") related
+        )
       );
 
-  project = projectArgs: buildProject projectArgs (targetAliasesFor projectArgs.targets);
+      definitions = lib.unique (
+        target.definitions.private ++ lib.concatMap (t: t.definitions.public) related
+      );
+    in
+    lib.concatStringsSep " " (
+      (map (inc: "-I${lib.escapeShellArg (pathString inc)}") projectIncludes)
+      ++ (map (inc: "-isystem ${lib.escapeShellArg (pathString inc)}") externalIncludes)
+      ++ (map (def: "-D${lib.escapeShellArg def}") definitions)
+      ++ [ (pkgConfigFlags "cflags" target) ]
+    );
 
-  buildProject =
-    projectArgs: targetAliases:
+  linkFlagsFor =
+    target:
     let
-      inherit (projectArgs)
-        name
-        src
-        cxxFlags
-        targets
-        ;
-      version = projectArgs.version or "0.1.0";
-      objcFlags = projectArgs.objcFlags or "-O2 -fobjc-arc";
-      objcxxFlags = projectArgs.objcxxFlags or "-fobjc-arc";
-      # A test target is the same as an explicitly declared sibling executable.
-      # Libraries link against the library under test; executables cannot be
-      # linked, so their tests inherit their dependencies but not their sources.
-      testTargets =
-        lib.mapAttrsToList
-          (_: target: {
-            name = "${target.name}-tests";
-            value = target // {
-              type = "executable";
-              name = "${target.name}-tests";
-              sources = target.testSources or [ ];
-              dependencies = if target.type == "library" then [ target ] else target.dependencies;
-              testSources = [ ];
-            };
-          })
-          (
-            lib.filterAttrs (
-              _: target:
-              (target.type == "library" || target.type == "executable") && (target.testSources or [ ]) != [ ]
-            ) targets
-          );
+      related = closure target;
+      extraLibraries = lib.concatMap (dep: dep.linkLibraries or [ ]) related;
+      externalFlags = lib.concatMap (dep: dep.linkFlags or [ ]) (
+        lib.filter (dep: dep.type == "external") related
+      );
+    in
+    lib.concatStringsSep " " (
+      (target.linkFlags or [ ])
+      ++ externalFlags
+      ++ map (name: "-l${lib.escapeShellArg name}") extraLibraries
+      ++ [ (pkgConfigFlags "libs" target) ]
+    );
 
-      testNames = map (testTarget: testTarget.name) testTargets;
-      existingNames = (lib.attrNames targets) ++ (map (target: target.name) (lib.attrValues targets));
+  objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
-      expandedTargets =
-        if
-          lib.length (lib.unique testNames) != lib.length testNames
-          || lib.intersectLists testNames existingNames != [ ]
-        then
-          throw "cpp.project: generated test target names collide with existing targets or each other"
-        else
-          targets // (lib.listToAttrs testTargets);
+  outputFor =
+    target:
+    if target.type == "library" then
+      "build/lib/lib${target.name}.a"
+    else
+      "build/bin/${target.name}${exeSuffix}";
 
-      executables = lib.filterAttrs (_: target: target.type == "executable") expandedTargets;
-
-      allTargets = lib.attrValues expandedTargets;
-
-      normalize =
-        dependency:
-        if lib.isDerivation dependency then
-          external { package = dependency; }
-        else if (dependency.type or "") == "external" then
-          dependency
-        else if lib.hasAttr (dependency.name or "") targetAliases then
-          let
-            key = targetAliases.${dependency.name};
-          in
-          if lib.hasAttr key expandedTargets then
-            expandedTargets.${key}
-          else
-            throw "cpp.project: dependency '${dependency.name}' refers to a removed target"
-        else
-          dependency;
-
-      closure =
-        dependency:
+  compileRules =
+    target:
+    lib.concatStringsSep "\n" (
+      lib.imap0 (
+        i: source:
         let
-          target = normalize dependency;
-        in
-        [ target ] ++ lib.concatMap closure target.dependencies;
+          path = toString source;
 
-      # Compile usage traverses public edges only after the first hop. Static
-      # linking still needs the complete dependency graph, including private edges.
-      publicClosure =
-        dependency:
-        let
-          target = normalize dependency;
-        in
-        lib.optional (!(target.linkOnly or false)) target
-        ++ lib.concatMap publicClosure (
-          if target.linkOnly or false then
-            [ ]
-          else if target ? public then
-            target.public.dependencies
-          else
-            target.dependencies
-        );
-
-      usageFor = target: [ target ] ++ lib.concatMap publicClosure target.dependencies;
-
-      dependenciesFor = target: lib.tail (closure target);
-
-      externalDependencies = lib.filter (dep: dep.type == "external") (lib.concatMap closure allTargets);
-
-      externalPackages = lib.unique (map (dep: dep.package) externalDependencies);
-
-      pkgConfigFor = target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (closure target));
-      compilePkgConfigFor =
-        target: lib.unique (lib.concatMap (dep: dep.pkgConfig or [ ]) (usageFor target));
-
-      pkgConfigFile = mode: target: "build/deps/${target.name}.${mode}.rsp";
-
-      pkgConfigFlags =
-        mode: target: lib.optionalString (pkgConfigFor target != [ ]) "@${pkgConfigFile mode target}";
-
-      pkgConfigDependency =
-        mode: target: lib.optionalString (pkgConfigFor target != [ ]) " | ${pkgConfigFile mode target}";
-
-      pkgConfigRule =
-        target:
-        let
-          modules = pkgConfigFor target;
-          # Package paths in the command invalidate cached flags when dependencies change.
-          paths = lib.concatMap (dep: [
-            "${lib.getDev dep.package}/lib/pkgconfig"
-            "${lib.getDev dep.package}/share/pkgconfig"
-          ]) (lib.filter (dep: dep.type == "external") (closure target));
-        in
-        lib.optionalString (modules != [ ]) ''
-          build ${pkgConfigFile "cflags" target} ${pkgConfigFile "libs" target}: pkg_config
-            modules = ${lib.escapeShellArgs modules}
-            compile_modules = ${lib.escapeShellArgs (compilePkgConfigFor target)}
-            pcpath = ${lib.escapeShellArg (lib.concatStringsSep ":" (lib.unique paths))}
-            cflags = ${pkgConfigFile "cflags" target}
-            libs = ${pkgConfigFile "libs" target}
-        '';
-
-      flagsFor =
-        target:
-        let
-          related = usageFor target;
-
-          projectIncludes = lib.unique (
-            target.includes
-            ++ lib.concatMap (t: if t ? public then t.public.includes else t.includes) (
-              lib.filter (t: t.type != "external") (lib.tail related)
-            )
-          );
-          externalIncludes = lib.unique (
-            lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) (
-              lib.filter (t: t.type == "external") related
-            )
-          );
-
-          definitions = lib.unique (
-            target.definitions.private ++ lib.concatMap (t: t.definitions.public) related
-          );
-        in
-        lib.concatStringsSep " " (
-          (map (inc: "-I${lib.escapeShellArg (pathString inc)}") projectIncludes)
-          ++ (map (inc: "-isystem ${lib.escapeShellArg (pathString inc)}") externalIncludes)
-          ++ (map (def: "-D${lib.escapeShellArg def}") definitions)
-          ++ [ (pkgConfigFlags "cflags" target) ]
-        );
-
-      linkFlagsFor =
-        target:
-        let
-          related = closure target;
-          extraLibraries = lib.concatMap (dep: dep.linkLibraries or [ ]) related;
-          externalFlags = lib.concatMap (dep: dep.linkFlags or [ ]) (
-            lib.filter (dep: dep.type == "external") related
-          );
-        in
-        lib.concatStringsSep " " (
-          (target.linkFlags or [ ])
-          ++ externalFlags
-          ++ map (name: "-l${lib.escapeShellArg name}") extraLibraries
-          ++ [ (pkgConfigFlags "libs" target) ]
-        );
-
-      objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
-
-      outputFor =
-        target:
-        if target.type == "library" then
-          "build/lib/lib${target.name}.a"
-        else
-          "build/bin/${target.name}${exeSuffix}";
-
-      compileRules =
-        target:
-        lib.concatStringsSep "\n" (
-          lib.imap0 (
-            i: source:
-            let
-              path = toString source;
-
-              languageFlags =
-                if lib.hasSuffix ".mm" path then
-                  "${cxxFlags} ${objcxxFlags}"
-                else if lib.hasSuffix ".m" path then
-                  objcFlags
-                else
-                  cxxFlags;
-            in
-            ''
-              build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target}
-                flags = ${languageFlags} ${flagsFor target}
-            ''
-          ) target.sources
-        );
-
-      targetRules =
-        key: target:
-        let
-          dependencies = dependenciesFor target;
-          libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
-          assets = target.assets or [ ];
-          assetStamp = "build/.${target.name}-assets";
-          assetPath = asset: if lib.hasPrefix "/" asset then asset else "./${asset}";
-          assetCopies = lib.concatStringsSep " && " (
-            map (
-              asset:
-              "rm -rf ${
-                lib.escapeShellArg ("build/bin/" + builtins.baseNameOf asset)
-              } && cp -R ${lib.escapeShellArg (assetPath asset)} build/bin"
-            ) assets
-          );
-
-          inputs = objectsFor target ++ (if target.type == "executable" then libraries else [ ]);
-          assetDependency = if target.type == "executable" && assets != [ ] then " || ${assetStamp}" else "";
-          assetRule =
-            if target.type != "executable" || assets == [ ] then
-              ""
+          languageFlags =
+            if lib.hasSuffix ".mm" path then
+              "${cxxFlags} ${objcxxFlags}"
+            else if lib.hasSuffix ".m" path then
+              objcFlags
             else
-              ''
-                build ${assetStamp}: copy_assets | always_assets
-                  copies = ${assetCopies}
-              '';
-
-          rule = if target.type == "library" then "archive" else "link";
+              cxxFlags;
         in
         ''
-          ${pkgConfigRule target}
-          ${compileRules target}
-          ${assetRule}
+          build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target}
+            flags = ${compileFlags} ${languageFlags} ${flagsFor target}
+        ''
+      ) target.sources
+    );
 
-          build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${
-            lib.optionalString (target.type == "executable") (pkgConfigDependency "libs" target)
-          }${assetDependency}
-            ldflags = ${linkFlagsFor target}
-          build ${key}: phony ${outputFor target}
-        '';
-
-      assetNameConflict = lib.any (
-        target:
-        lib.any (
+  targetRules =
+    key: target:
+    let
+      dependencies = dependenciesFor target;
+      libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
+      assets = target.assets or [ ];
+      assetStamp = "build/.${target.name}-assets";
+      assetPath = asset: if lib.hasPrefix "/" asset then asset else "./${asset}";
+      assetCopies = lib.concatStringsSep " && " (
+        map (
           asset:
-          lib.elem (builtins.baseNameOf asset) (
-            map (exe: "${exe.name}${exeSuffix}") (lib.attrValues executables)
-          )
-        ) (target.assets or [ ])
-      ) (lib.attrValues executables);
-
-      ninjaFile =
-        if assetNameConflict then
-          throw "cpp.project: asset directory names cannot match executable filenames"
-        else
-          pkgs.writeText "build.ninja" ''
-            rule pkg_config
-              command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && { if [ -z "$compile_modules" ]; then :; else "$''${PKG_CONFIG:-pkg-config}" --cflags $compile_modules; fi; } > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
-              description = PKG_CONFIG $modules
-
-            rule compile
-              command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
-              description = CXX $in
-              depfile = $out.d
-              deps = gcc
-
-            rule archive
-              command = mkdir -p $$(dirname $out) && $$AR rcs $out $in
-              description = AR $out
-
-            rule link
-              command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
-              description = LINK $out
-
-            rule copy_assets
-              command = mkdir -p $$(dirname $out) build/bin && $copies && touch $out
-              description = COPY_ASSETS $out
-
-            build always_assets: phony
-
-            ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
-
-            default ${
-              lib.concatStringsSep " " (map outputFor (lib.filter (t: t.type != "external") allTargets))
-            }
-          '';
-
-      exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
-      runCases = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (
-          key: target:
-          "  ${lib.escapeShellArg key}) executable=${lib.escapeShellArg "build/bin/${target.name}${exeSuffix}"} ;;"
-        ) executables
+          "rm -rf ${
+            lib.escapeShellArg ("build/bin/" + builtins.baseNameOf asset)
+          } && cp -R ${lib.escapeShellArg (assetPath asset)} build/bin"
+        ) assets
       );
-      projectDrv = pkgs.stdenv.mkDerivation {
-        pname = name;
 
-        inherit src version;
-        strictDeps = true;
-
-        nativeBuildInputs = [
-          pkgs.buildPackages.ninja
-          pkgs.buildPackages.pkg-config
-        ];
-
-        buildInputs = externalPackages;
-
-        dontConfigure = true;
-
-        buildPhase = ''
-          runHook preBuild
-
-          cp ${ninjaFile} build.ninja
-          ninja -j "$NIX_BUILD_CORES"
-
-          runHook postBuild
-        '';
-
-        installPhase = ''
-          runHook preInstall
-
-          mkdir -p "$out/bin"
-
-          # build/bin is the runtime staging directory, including any
-          # companion files emitted by the toolchain and copied assets.
-          if [ -d build/bin ]; then
-            cp -R build/bin/. "$out/bin/"
-          fi
-
-          if [ -d build/lib ]; then
-            mkdir -p "$out/lib"
-            cp -R build/lib/. "$out/lib/"
-          fi
-
-          ${lib.concatMapStringsSep "\n" (
-            target:
-            lib.concatMapStringsSep "\n" (headers: ''
-              mkdir -p "$out/include"
-              cp -R ${lib.escapeShellArg (pathString headers)}/. "$out/include/"
-            '') (target.public.headers or [ ])
-          ) allTargets}
-
-          runHook postInstall
-        '';
-
-        passthru = {
-          targets = expandedTargets;
-          inherit ninjaFile;
-
-          # Store paths, not source-tree include paths, form the installed API.
-          cppUsage =
-            let
-              libraries = lib.filter (t: t.type == "library") allTargets;
-              exported = lib.concatMap publicClosure libraries;
-              exportedExternals = lib.filter (t: t.type == "external") exported;
-              linkTargets = lib.concatMap closure libraries;
-              orderedLibraries = lib.reverseList (
-                lib.unique (lib.reverseList (lib.filter (t: t.type == "library") linkTargets))
-              );
-            in
-            {
-              includes = [
-                "${projectDrv}/include"
-              ]
-              ++ lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) exportedExternals;
-              definitions = {
-                public = lib.unique (lib.concatMap (t: t.definitions.public) exported);
-                private = [ ];
-              };
-              pkgConfig = lib.unique (lib.concatMap (t: t.pkgConfig or [ ]) exported);
-              linkFlags =
-                map (t: "${projectDrv}/lib/lib${t.name}.a") orderedLibraries
-                ++ lib.concatMap (t: t.linkFlags or [ ]) (lib.filter (t: t.type != "external") linkTargets);
-              linkLibraries = lib.concatMap (t: t.linkLibraries or [ ]) (
-                lib.filter (t: t.type != "external") linkTargets
-              );
-              dependencies = map (t: t // { linkOnly = true; }) (
-                lib.filter (t: t.type == "external") linkTargets
-              );
-            };
-
-          tests = pkgs.runCommand "test-${name}" { } ''
-            ${lib.concatMapStringsSep "\n" (
-              testTarget: lib.escapeShellArg "${projectDrv}/bin/${testTarget.name}${exeSuffix}"
-            ) testTargets}
-            touch "$out"
+      inputs = objectsFor target ++ (if target.type == "executable" then libraries else [ ]);
+      assetDependency = if target.type == "executable" && assets != [ ] then " || ${assetStamp}" else "";
+      assetRule =
+        if target.type != "executable" || assets == [ ] then
+          ""
+        else
+          ''
+            build ${assetStamp}: copy_assets | always_assets
+              copies = ${assetCopies}
           '';
 
-          devShell = pkgs.mkShell {
-            packages = [
-              pkgs.buildPackages.ninja
-              pkgs.buildPackages.pkg-config
-
-              (pkgs.buildPackages.writeShellScriptBin "build" ''
-                exec ninja -f ${ninjaFile} "$@"
-              '')
-
-              # Build the target if needed, then run it (and pass through any arguments).
-              (pkgs.buildPackages.writeShellScriptBin "run" ''
-                target="$1"
-                shift
-                case "$target" in
-                ${runCases}
-                  *) echo "Unknown executable target: $target" >&2; exit 2 ;;
-                esac
-                ninja -f ${ninjaFile} "$target" && exec "$executable" "$@"
-              '')
-            ]
-            ++ externalPackages;
-            shellHook = ''
-              complete -W ${lib.escapeShellArg (lib.concatStringsSep " " (lib.attrNames expandedTargets))} run build
-            '';
-          };
-        };
-      };
+      rule = if target.type == "library" then "archive" else "link";
     in
-    projectDrv
-    // {
-      override =
-        changes:
-        let
-          patch = if builtins.isFunction changes then changes projectArgs else changes;
-          nextArgs = lib.recursiveUpdate projectArgs patch;
-          nextAliases = targetAliasesFor nextArgs.targets;
-          aliasConflicts = lib.filter (
-            alias: lib.hasAttr alias targetAliases && targetAliases.${alias} != nextAliases.${alias}
-          ) (lib.attrNames nextAliases);
-          aliases =
-            if aliasConflicts != [ ] then
-              throw "cpp.project: target names cannot be reused after an override"
-            else
-              targetAliases // nextAliases;
-        in
-        buildProject nextArgs aliases;
-    };
+    ''
+      ${pkgConfigRule target}
+      ${compileRules target}
+      ${assetRule}
 
+      build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${
+        lib.optionalString (target.type == "executable") (pkgConfigDependency "libs" target)
+      }${assetDependency}
+        ldflags = ${linkFlags} ${linkFlagsFor target}
+      build ${key}: phony ${outputFor target}
+    '';
+
+  assetNameConflict = lib.any (
+    target:
+    lib.any (
+      asset:
+      lib.elem (builtins.baseNameOf asset) (
+        map (exe: "${exe.name}${exeSuffix}") (lib.attrValues executables)
+      )
+    ) (target.assets or [ ])
+  ) (lib.attrValues executables);
+
+  ninjaFile =
+    if assetNameConflict then
+      throw "cpp.project: asset directory names cannot match executable filenames"
+    else
+      pkgs.writeText "build.ninja" ''
+        rule pkg_config
+          command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && { if [ -z "$compile_modules" ]; then :; else "$''${PKG_CONFIG:-pkg-config}" --cflags $compile_modules; fi; } > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
+          description = PKG_CONFIG $modules
+
+        rule compile
+          command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
+          description = CXX $in
+          depfile = $out.d
+          deps = gcc
+
+        rule archive
+          command = mkdir -p $$(dirname $out) && ${archiveCommand} rcs $out $in
+          description = AR $out
+
+        rule link
+          command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
+          description = LINK $out
+
+        rule copy_assets
+          command = mkdir -p $$(dirname $out) build/bin && $copies && touch $out
+          description = COPY_ASSETS $out
+
+        build always_assets: phony
+
+        ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
+
+        default ${
+          lib.concatStringsSep " " (map outputFor (lib.filter (t: t.type != "external") allTargets))
+        }
+      '';
 in
-{
-  inherit project;
-}
+ninjaFile
