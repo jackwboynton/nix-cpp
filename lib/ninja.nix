@@ -12,11 +12,13 @@
   objcFlags,
   objcxxFlags,
   exeSuffix,
+  pathFor ? (path: if builtins.isPath path then "${path}" else toString path),
+  libraryPathFor ? (target: "build/lib/lib${target.name}.a"),
 }:
 
 let
   inherit (pkgs) lib;
-  pathString = path: if builtins.isPath path then "${path}" else toString path;
+  pathString = pathFor;
 
   compileFlags = lib.escapeShellArgs toolchain.compileFlags;
   linkFlags = lib.escapeShellArgs toolchain.linkFlags;
@@ -116,8 +118,7 @@ let
       lib.imap0 (
         i: source:
         let
-          path = toString source;
-
+          path = pathString source;
           languageFlags =
             if lib.hasSuffix ".mm" path then
               "${cxxFlags} ${objcxxFlags}"
@@ -137,10 +138,12 @@ let
     key: target:
     let
       dependencies = dependenciesFor target;
-      libraries = map outputFor (lib.filter (t: t.type == "library") dependencies);
+      libraries = map libraryPathFor (lib.filter (t: t.type == "library") dependencies);
       assets = target.assets or [ ];
       assetStamp = "build/.${target.name}-assets";
-      assetPath = asset: if lib.hasPrefix "/" asset then asset else "./${asset}";
+      assetPath = asset:
+        let path = pathString asset;
+        in if lib.hasPrefix "/" path then path else "./${path}";
       assetCopies = lib.concatStringsSep " && " (
         map (
           asset:
@@ -171,7 +174,7 @@ let
       build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${
         lib.optionalString (target.type == "executable") (pkgConfigDependency "libs" target)
       }${assetDependency}
-        ldflags = ${linkFlags} ${linkFlagsFor target}
+      ${lib.optionalString (target.type == "executable") "  ldflags = ${linkFlags} ${linkFlagsFor target}"}
       build ${key}: phony ${outputFor target}
     '';
 

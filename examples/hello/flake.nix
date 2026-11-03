@@ -47,29 +47,25 @@
           };
           cpp = nix-cpp.lib.mkCpp emPkgs;
         in
-        (cpp.project {
+        cpp.project {
           name = "hello";
           src = ./.;
           cxxFlags = "-std=c++23 -O2";
+          nativeBuildInputs = [ nativePkgs.buildPackages.nodejs ];
+          preBuild = ''
+            export CC="${nativePkgs.emscripten}/bin/emcc"
+            export CXX="${nativePkgs.emscripten}/bin/em++"
+            export AR="${nativePkgs.emscripten}/bin/emar"
+
+            export EM_CACHE="$TMPDIR/emscripten-cache"
+            mkdir -p "$EM_CACHE"
+          '';
 
           targets.hello = cpp.executable {
             name = "hello";
             sources = [ "main.cpp" ];
           };
-        }).overrideAttrs
-          (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ nativePkgs.buildPackages.nodejs ];
-            preBuild = (old.preBuild or "") + ''
-              export CC="${nativePkgs.emscripten}/bin/emcc"
-              export CXX="${nativePkgs.emscripten}/bin/em++"
-              export AR="${nativePkgs.emscripten}/bin/emar"
-
-              export EM_CACHE="$TMPDIR/emscripten-cache"
-              mkdir -p "$EM_CACHE"
-            '';
-
-            checkPhase = "";
-          })
+        }
       );
 
       # TODO(jack): only when pkgs.stdenv.hostPlatform.isLinux

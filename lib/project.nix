@@ -3,7 +3,6 @@
 let
   inherit (pkgs) lib;
   inherit (targetsLib) external;
-  pathString = path: if builtins.isPath path then "${path}" else toString path;
 
   targetAliasesFor =
     targets:
@@ -75,60 +74,74 @@ let
 
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
 
-      projectDrv = toolchain.stdenv.mkDerivation {
-        pname = name;
+      sources = (import ./sources.nix { inherit lib; }) {
+        inherit src usageFor;
+      };
 
-        inherit src version;
-        strictDeps = true;
+      targetPackages = lib.mapAttrs (
+        key: target:
+        let
+          selected = { ${key} = target; };
+          targetNinja = (import ./ninja.nix { inherit pkgs; }) {
+            inherit toolchain closure usageFor dependenciesFor cxxFlags objcFlags objcxxFlags exeSuffix;
+            expandedTargets = selected;
+            executables = lib.filterAttrs (_: t: t.type == "executable") selected;
+            allTargets = [ target ];
+            inherit (sources) pathFor;
+            libraryPathFor = dependency:
+              "${targetPackages.${targetAliases.${dependency.name}}}/lib/lib${dependency.name}.a";
+          };
+          packages = lib.unique (map (dep: dep.package) (
+            lib.filter (dep: dep.type == "external") (closure target)
+          ));
+        in
+        toolchain.stdenv.mkDerivation {
+          pname = target.name;
+          inherit version;
+          src = sources.sourceFor target;
+          strictDeps = true;
+          nativeBuildInputs = [ pkgs.buildPackages.ninja pkgs.buildPackages.pkg-config ]
+            ++ (projectArgs.nativeBuildInputs or [ ]);
+          buildInputs = packages;
+          preBuild = projectArgs.preBuild or "";
+          # Plain strip rewrites slim GCC LTO archive indexes without the plugin.
+          dontStrip = target.type == "library" && toolchain.ranlibTool == "gcc-ranlib";
+          dontConfigure = true;
+          passthru.ninjaFile = targetNinja;
 
-        nativeBuildInputs = [
-          pkgs.buildPackages.ninja
-          pkgs.buildPackages.pkg-config
-        ];
+          buildPhase = ''
+            runHook preBuild
+            cp ${targetNinja} build.ninja
+            ninja -j "$NIX_BUILD_CORES"
+            runHook postBuild
+          '';
 
-        buildInputs = externalPackages;
-
-        dontConfigure = true;
-
-        buildPhase = ''
-          runHook preBuild
-
-          cp ${ninjaFile} build.ninja
-          ninja -j "$NIX_BUILD_CORES"
-
-          runHook postBuild
-        '';
-
-        installPhase = ''
-          runHook preInstall
-
-          mkdir -p "$out/bin"
-
-          # build/bin is the runtime staging directory, including any
-          # companion files emitted by the toolchain and copied assets.
-          if [ -d build/bin ]; then
-            cp -R build/bin/. "$out/bin/"
-          fi
-
-          if [ -d build/lib ]; then
-            mkdir -p "$out/lib"
-            cp -R build/lib/. "$out/lib/"
-          fi
-
-          ${lib.concatMapStringsSep "\n" (
-            target:
-            lib.concatMapStringsSep "\n" (headers: ''
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            for directory in bin lib; do
+              if [ -d "build/$directory" ]; then
+                mkdir -p "$out/$directory"
+                cp -R "build/$directory/." "$out/$directory/"
+              fi
+            done
+            ${lib.concatMapStringsSep "\n" (headers: ''
               mkdir -p "$out/include"
-              cp -R ${lib.escapeShellArg (pathString headers)}/. "$out/include/"
-            '') (target.public.headers or [ ])
-          ) allTargets}
+              cp -R ${lib.escapeShellArg (sources.pathFor headers)}/. "$out/include/"
+            '') (target.public.headers or [ ])}
+            runHook postInstall
+          '';
+        }
+      ) expandedTargets;
 
-          runHook postInstall
-        '';
-
+      projectDrv = builtins.seq ninjaFile (pkgs.buildPackages.symlinkJoin {
+        name = "${name}-${version}";
+        pname = name;
+        inherit version;
+        paths = lib.attrValues targetPackages;
         passthru = {
           targets = expandedTargets;
-          inherit ninjaFile;
+          inherit ninjaFile targetPackages;
 
           # Store paths, not source-tree include paths, form the installed API.
           cppUsage =
@@ -180,7 +193,7 @@ let
             inherit (toolchain) stdenv;
           };
         };
-      };
+      });
     in
     projectDrv
     // {
