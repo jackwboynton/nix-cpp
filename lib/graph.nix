@@ -13,6 +13,7 @@ let
           sources = target.testSources or [ ];
           dependencies = if target.type == "library" then [ target ] else target.dependencies;
           testSources = [ ];
+          testOf = target;
         };
       })
       (
