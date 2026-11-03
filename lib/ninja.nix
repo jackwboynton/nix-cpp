@@ -119,7 +119,6 @@ let
         i: source:
         let
           path = pathString source;
-
           languageFlags =
             if lib.hasSuffix ".mm" path then
               "${cxxFlags} ${objcxxFlags}"
