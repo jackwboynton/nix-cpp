@@ -56,7 +56,7 @@ let
         externalPackages
         ;
 
-      ninjaFile = (import ./ninja.nix { inherit pkgs; }) {
+      ninja = (import ./ninja.nix { inherit pkgs; }) {
         inherit
           toolchain
           expandedTargets
@@ -72,6 +72,8 @@ let
           ;
       };
 
+      inherit (ninja) ninjaFile;
+
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
 
       sources = (import ./sources.nix { inherit lib; }) {
@@ -81,38 +83,51 @@ let
       targetPackages = lib.mapAttrs (
         key: target:
         let
-          selected = { ${key} = target; };
+          selected = {
+            ${key} = target;
+          };
           targetNinja = (import ./ninja.nix { inherit pkgs; }) {
-            inherit toolchain closure usageFor dependenciesFor cxxFlags objcFlags objcxxFlags exeSuffix;
+            inherit
+              toolchain
+              closure
+              usageFor
+              dependenciesFor
+              cxxFlags
+              objcFlags
+              objcxxFlags
+              exeSuffix
+              ;
             expandedTargets = selected;
             executables = lib.filterAttrs (_: t: t.type == "executable") selected;
             allTargets = [ target ];
             inherit (sources) pathFor;
-            libraryPathFor = dependency:
-              "${targetPackages.${targetAliases.${dependency.name}}}/lib/lib${dependency.name}.a";
+            libraryPathFor =
+              dependency: "${targetPackages.${targetAliases.${dependency.name}}}/lib/lib${dependency.name}.a";
           };
-          packages = lib.unique (map (dep: dep.package) (
-            lib.filter (dep: dep.type == "external") (closure target)
-          ));
+          packages = lib.unique (
+            map (dep: dep.package) (lib.filter (dep: dep.type == "external") (closure target))
+          );
         in
         toolchain.stdenv.mkDerivation {
           pname = target.name;
           inherit version;
           src = sources.sourceFor target;
           strictDeps = true;
-          nativeBuildInputs = [ pkgs.buildPackages.ninja pkgs.buildPackages.pkg-config ]
-            ++ (projectArgs.nativeBuildInputs or [ ]);
+          nativeBuildInputs = [
+            pkgs.buildPackages.ninja
+            pkgs.buildPackages.pkg-config
+          ]
+          ++ (projectArgs.nativeBuildInputs or [ ]);
           buildInputs = packages;
           preBuild = projectArgs.preBuild or "";
           # Plain strip rewrites slim GCC LTO archive indexes without the plugin.
           dontStrip = target.type == "library" && toolchain.ranlibTool == "gcc-ranlib";
           dontConfigure = true;
-          passthru.ninjaFile = targetNinja;
+          passthru.ninjaFile = targetNinja.ninjaFile;
 
           buildPhase = ''
             runHook preBuild
-            cp ${targetNinja} build.ninja
-            ninja -j "$NIX_BUILD_CORES"
+            ${targetNinja.command} -j "$NIX_BUILD_CORES"
             runHook postBuild
           '';
 
@@ -134,66 +149,68 @@ let
         }
       ) expandedTargets;
 
-      projectDrv = builtins.seq ninjaFile (pkgs.buildPackages.symlinkJoin {
-        name = "${name}-${version}";
-        pname = name;
-        inherit version;
-        paths = lib.attrValues targetPackages;
-        passthru = {
-          targets = expandedTargets;
-          inherit ninjaFile targetPackages;
+      projectDrv = builtins.seq ninjaFile (
+        pkgs.buildPackages.symlinkJoin {
+          name = "${name}-${version}";
+          pname = name;
+          inherit version;
+          paths = lib.attrValues targetPackages;
+          passthru = {
+            targets = expandedTargets;
+            inherit ninjaFile targetPackages;
 
-          # Store paths, not source-tree include paths, form the installed API.
-          cppUsage =
-            let
-              libraries = lib.filter (t: t.type == "library") allTargets;
-              exported = lib.concatMap publicClosure libraries;
-              exportedExternals = lib.filter (t: t.type == "external") exported;
-              linkTargets = lib.concatMap closure libraries;
-              orderedLibraries = lib.reverseList (
-                lib.unique (lib.reverseList (lib.filter (t: t.type == "library") linkTargets))
-              );
-            in
-            {
-              includes = [
-                "${projectDrv}/include"
-              ]
-              ++ lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) exportedExternals;
-              definitions = {
-                public = lib.unique (lib.concatMap (t: t.definitions.public) exported);
-                private = [ ];
+            # Store paths, not source-tree include paths, form the installed API.
+            cppUsage =
+              let
+                libraries = lib.filter (t: t.type == "library") allTargets;
+                exported = lib.concatMap publicClosure libraries;
+                exportedExternals = lib.filter (t: t.type == "external") exported;
+                linkTargets = lib.concatMap closure libraries;
+                orderedLibraries = lib.reverseList (
+                  lib.unique (lib.reverseList (lib.filter (t: t.type == "library") linkTargets))
+                );
+              in
+              {
+                includes = [
+                  "${projectDrv}/include"
+                ]
+                ++ lib.concatMap (t: [ "${lib.getDev t.package}/include" ] ++ t.includes) exportedExternals;
+                definitions = {
+                  public = lib.unique (lib.concatMap (t: t.definitions.public) exported);
+                  private = [ ];
+                };
+                pkgConfig = lib.unique (lib.concatMap (t: t.pkgConfig or [ ]) exported);
+                linkFlags =
+                  map (t: "${projectDrv}/lib/lib${t.name}.a") orderedLibraries
+                  ++ lib.concatMap (t: t.linkFlags or [ ]) (lib.filter (t: t.type != "external") linkTargets);
+                linkLibraries = lib.concatMap (t: t.linkLibraries or [ ]) (
+                  lib.filter (t: t.type != "external") linkTargets
+                );
+                dependencies = map (t: t // { linkOnly = true; }) (
+                  lib.filter (t: t.type == "external") linkTargets
+                );
               };
-              pkgConfig = lib.unique (lib.concatMap (t: t.pkgConfig or [ ]) exported);
-              linkFlags =
-                map (t: "${projectDrv}/lib/lib${t.name}.a") orderedLibraries
-                ++ lib.concatMap (t: t.linkFlags or [ ]) (lib.filter (t: t.type != "external") linkTargets);
-              linkLibraries = lib.concatMap (t: t.linkLibraries or [ ]) (
-                lib.filter (t: t.type != "external") linkTargets
-              );
-              dependencies = map (t: t // { linkOnly = true; }) (
-                lib.filter (t: t.type == "external") linkTargets
-              );
+
+            tests = pkgs.runCommand "test-${name}" { } ''
+              ${lib.concatMapStringsSep "\n" (
+                testTarget: lib.escapeShellArg "${projectDrv}/bin/${testTarget.name}${exeSuffix}"
+              ) testTargets}
+              touch "$out"
+            '';
+
+            devShell = (import ./devshell.nix { inherit pkgs; }) {
+              inherit
+                expandedTargets
+                executables
+                externalPackages
+                exeSuffix
+                ;
+              ninjaCommand = ninja.command;
+              inherit (toolchain) stdenv;
             };
-
-          tests = pkgs.runCommand "test-${name}" { } ''
-            ${lib.concatMapStringsSep "\n" (
-              testTarget: lib.escapeShellArg "${projectDrv}/bin/${testTarget.name}${exeSuffix}"
-            ) testTargets}
-            touch "$out"
-          '';
-
-          devShell = (import ./devshell.nix { inherit pkgs; }) {
-            inherit
-              expandedTargets
-              executables
-              externalPackages
-              ninjaFile
-              exeSuffix
-              ;
-            inherit (toolchain) stdenv;
           };
-        };
-      });
+        }
+      );
     in
     projectDrv
     // {

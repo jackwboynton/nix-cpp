@@ -128,7 +128,7 @@ let
               cxxFlags;
         in
         ''
-          build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target}
+          build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target} || build/obj/${target.name}
             flags = ${compileFlags} ${languageFlags} ${flagsFor target}
         ''
       ) target.sources
@@ -141,9 +141,12 @@ let
       libraries = map libraryPathFor (lib.filter (t: t.type == "library") dependencies);
       assets = target.assets or [ ];
       assetStamp = "build/.${target.name}-assets";
-      assetPath = asset:
-        let path = pathString asset;
-        in if lib.hasPrefix "/" path then path else "./${path}";
+      assetPath =
+        asset:
+        let
+          path = pathString asset;
+        in
+        if lib.hasPrefix "/" path then path else "./${path}";
       assetCopies = lib.concatStringsSep " && " (
         map (
           asset:
@@ -174,7 +177,9 @@ let
       build ${outputFor target}: ${rule} ${lib.concatStringsSep " " inputs}${
         lib.optionalString (target.type == "executable") (pkgConfigDependency "libs" target)
       }${assetDependency}
-      ${lib.optionalString (target.type == "executable") "  ldflags = ${linkFlags} ${linkFlagsFor target}"}
+      ${lib.optionalString (
+        target.type == "executable"
+      ) "  ldflags = ${linkFlags} ${linkFlagsFor target}"}
       build ${key}: phony ${outputFor target}
     '';
 
@@ -197,8 +202,12 @@ let
           command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && { if [ -z "$compile_modules" ]; then :; else "$''${PKG_CONFIG:-pkg-config}" --cflags $compile_modules; fi; } > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
           description = PKG_CONFIG $modules
 
+        rule mkdir
+          command = mkdir -p $out
+          description = MKDIR $out
+
         rule compile
-          command = mkdir -p $$(dirname $out) && $$CXX $flags -MMD -MF $out.d -c $in -o $out
+          command = $cxx $flags -MMD -MF $out.d -c $in -o $out
           description = CXX $in
           depfile = $out.d
           deps = gcc
@@ -208,7 +217,7 @@ let
           description = AR $out
 
         rule link
-          command = mkdir -p $$(dirname $out) && $$CXX $in $ldflags -o $out
+          command = mkdir -p $$(dirname $out) && $cxx $in $ldflags -o $out
           description = LINK $out
 
         rule copy_assets
@@ -219,9 +228,21 @@ let
 
         ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
 
+        ${lib.concatStringsSep "\n" (lib.map (target: "build build/obj/${target.name}: mkdir") allTargets)}
+
         default ${
           lib.concatStringsSep " " (map outputFor (lib.filter (t: t.type != "external") allTargets))
         }
       '';
 in
-ninjaFile
+{
+  inherit ninjaFile;
+
+  # Configure Ninja from the active toolchain for both builds and Ninja tools.
+  command = pkgs.buildPackages.writeShellScript "cpp-ninja" ''
+    set -eu
+    cxx=$(command -v "''${CXX:?CXX must be set}")
+    printf 'cxx = %s\ninclude %s\n' "$cxx" ${ninjaFile} > build.ninja
+    exec ${pkgs.buildPackages.ninja}/bin/ninja "$@"
+  '';
+}

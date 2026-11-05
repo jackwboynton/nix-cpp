@@ -4,7 +4,7 @@
   expandedTargets,
   executables,
   externalPackages,
-  ninjaFile,
+  ninjaCommand,
   exeSuffix,
   stdenv ? pkgs.stdenv,
 }:
@@ -25,7 +25,7 @@ in
     pkgs.buildPackages.pkg-config
 
     (pkgs.buildPackages.writeShellScriptBin "build" ''
-      exec ninja -f ${ninjaFile} "$@"
+      exec ${ninjaCommand} "$@"
     '')
 
     (pkgs.buildPackages.writeShellScriptBin "run" ''
@@ -35,7 +35,11 @@ in
       ${runCases}
         *) echo "Unknown executable target: $target" >&2; exit 2 ;;
       esac
-      ninja -f ${ninjaFile} "$target" && exec "$executable" "$@"
+      ${ninjaCommand} "$target" && exec "$executable" "$@"
+    '')
+
+    (pkgs.buildPackages.writeShellScriptBin "compdb" ''
+      ${ninjaCommand} -t compdb compile > compile_commands.json
     '')
   ]
   ++ externalPackages;
