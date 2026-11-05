@@ -52,6 +52,12 @@
             example.checks.${system} or { }
           )
         ) { } examples
+        // {
+          iwyu = import ./tests/iwyu.nix {
+            pkgs = nixpkgs.legacyPackages.${system};
+            cpp = self.lib.mkCpp nixpkgs.legacyPackages.${system};
+          };
+        }
       );
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);

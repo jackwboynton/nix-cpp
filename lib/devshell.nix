@@ -5,6 +5,7 @@
   executables,
   externalPackages,
   ninjaCommand,
+  compdbDependencies,
   exeSuffix,
   stdenv ? pkgs.stdenv,
 }:
@@ -39,7 +40,22 @@ in
     '')
 
     (pkgs.buildPackages.writeShellScriptBin "compdb" ''
+      set -e
+      ${lib.optionalString (compdbDependencies != [ ]) ''
+        ${ninjaCommand} ${lib.escapeShellArgs compdbDependencies}
+      ''}
       ${ninjaCommand} -t compdb compile > compile_commands.json
+    '')
+
+    (pkgs.buildPackages.writeShellScriptBin "iwyu" ''
+      if [ ! -f compile_commands.json ]; then
+        echo "No compile_commands.json found. Run compdb in the project directory first." >&2
+        exit 1
+      fi
+      # IWYU's Nix wrapper does not yet recognize -cxx-isystem.
+      cxxflags=$(< ${stdenv.cc}/nix-support/libcxx-cxxflags)
+      export NIX_CFLAGS_COMPILE="''${NIX_CFLAGS_COMPILE:-} ''${cxxflags//-cxx-isystem/-isystem}"
+      exec ${pkgs.buildPackages.include-what-you-use}/bin/iwyu_tool.py -p . "$@"
     '')
   ]
   ++ externalPackages;

@@ -237,6 +237,9 @@ let
 in
 {
   inherit ninjaFile;
+  compdbDependencies = map (pkgConfigFile "cflags") (
+    lib.filter (target: pkgConfigFor target != [ ]) allTargets
+  );
 
   # Configure Ninja from the active toolchain for both builds and Ninja tools.
   command = pkgs.buildPackages.writeShellScript "cpp-ninja" ''

@@ -206,6 +206,7 @@ let
                 exeSuffix
                 ;
               ninjaCommand = ninja.command;
+              inherit (ninja) compdbDependencies;
               inherit (toolchain) stdenv;
             };
           };
