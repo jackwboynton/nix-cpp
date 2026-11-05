@@ -13,6 +13,14 @@
 let
   inherit (pkgs) lib;
 
+  iwyu = pkgs.buildPackages.include-what-you-use.overrideAttrs (old: {
+    postInstall = (old.postInstall or "") + ''
+      # Nix's C++ header flags use -cxx-isystem, which IWYU's wrapper ignores.
+      substituteInPlace $out/bin/include-what-you-use \
+        --replace-fail '-isystem)' '-isystem|-cxx-isystem)'
+    '';
+  });
+
   runCases = lib.concatStringsSep "\n" (
     lib.mapAttrsToList (
       key: target:
@@ -52,10 +60,7 @@ in
         echo "No compile_commands.json found. Run compdb in the project directory first." >&2
         exit 1
       fi
-      # IWYU's Nix wrapper does not yet recognize -cxx-isystem.
-      cxxflags=$(< ${stdenv.cc}/nix-support/libcxx-cxxflags)
-      export NIX_CFLAGS_COMPILE="''${NIX_CFLAGS_COMPILE:-} ''${cxxflags//-cxx-isystem/-isystem}"
-      exec ${pkgs.buildPackages.include-what-you-use}/bin/iwyu_tool.py -p . "$@"
+      exec ${iwyu}/bin/iwyu_tool.py -p . "$@"
     '')
   ]
   ++ externalPackages;
