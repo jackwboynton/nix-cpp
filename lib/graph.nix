@@ -10,7 +10,7 @@ let
         value = target // {
           type = "executable";
           name = "${target.name}-tests";
-          module = null;
+          modules = [ ];
           sources = target.testSources or [ ];
           dependencies = if target.type == "library" then [ target ] else target.dependencies;
           testSources = [ ];

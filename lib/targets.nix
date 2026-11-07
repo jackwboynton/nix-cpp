@@ -14,6 +14,7 @@ let
       name,
       sources,
       module ? null,
+      modules ? [ ],
       public ? { },
       private ? { },
       linkFlags ? [ ],
@@ -26,16 +27,31 @@ let
       public = scope (args.public or { });
       private = scope (args.private or { });
       headers = value: if builtins.isList value then value else [ value ];
+      declaredModules =
+        if module != null && modules != [ ] then
+          throw "cpp.project: use either module or modules, not both"
+        else
+          lib.optional (module != null) module ++ modules;
+      checkedModules = map (
+        m:
+        if type != "library" then
+          throw "cpp.project: only libraries can export modules"
+        else if builtins.match "[a-zA-Z_][a-zA-Z0-9_]*([.][a-zA-Z_][a-zA-Z0-9_]*)*" m.name == null then
+          throw "cpp.project: invalid module name '${m.name}'"
+        else if builtins.elem m.source sources then
+          throw "cpp.project: module.source is already in sources"
+        else
+          m
+      ) declaredModules;
+      moduleNames = map (m: m.name) checkedModules;
     in
     {
       inherit type;
-      module =
-        if module == null then null
-        else if type != "library" then throw "cpp.project: only libraries can export a module"
-        else if builtins.match "[a-zA-Z_][a-zA-Z0-9_]*([.][a-zA-Z_][a-zA-Z0-9_]*)*" module.name == null
-        then throw "cpp.project: invalid module name '${module.name}'"
-        else if builtins.elem module.source sources then throw "cpp.project: module.source is already in sources"
-        else module;
+      modules =
+        if lib.length moduleNames != lib.length (lib.unique moduleNames) then
+          throw "cpp.project: module names must be unique within a target"
+        else
+          checkedModules;
       inherit (args) name sources;
       public = public // {
         includes = public.includes ++ headers public.headers;

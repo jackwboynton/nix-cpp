@@ -53,7 +53,7 @@ let
     target:
     let
       related = lib.filter (t: t.type != "external") (usageFor target);
-      sources = internalPaths (target.sources ++ lib.optional ((target.module or null) != null) target.module.source);
+      sources = internalPaths (target.sources ++ map (module: module.source) (target.modules or [ ]));
       includes = target.includes ++ lib.concatMap (t: t.public.includes) (lib.tail related);
       headers = (target.private.headers or [ ]) ++ lib.concatMap (t: t.public.headers or [ ]) related;
       testHeaders = internalPaths ((target.testOf or { }).sources or [ ]);
