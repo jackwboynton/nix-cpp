@@ -13,6 +13,7 @@ let
     args@{
       name,
       sources,
+      module ? null,
       public ? { },
       private ? { },
       linkFlags ? [ ],
@@ -28,6 +29,13 @@ let
     in
     {
       inherit type;
+      module =
+        if module == null then null
+        else if type != "library" then throw "cpp.project: only libraries can export a module"
+        else if builtins.match "[a-zA-Z_][a-zA-Z0-9_]*([.][a-zA-Z_][a-zA-Z0-9_]*)*" module.name == null
+        then throw "cpp.project: invalid module name '${module.name}'"
+        else if builtins.elem module.source sources then throw "cpp.project: module.source is already in sources"
+        else module;
       inherit (args) name sources;
       public = public // {
         includes = public.includes ++ headers public.headers;
@@ -71,6 +79,7 @@ let
     {
       type = "external";
       inherit package;
+      moduleFiles = usage.moduleFiles or [ ];
       includes = (usage.includes or [ ]) ++ includes;
       linkFlags = (usage.linkFlags or [ ]) ++ linkFlags;
       linkLibraries = (usage.linkLibraries or [ ]) ++ linkLibraries;

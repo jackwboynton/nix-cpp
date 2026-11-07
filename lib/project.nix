@@ -86,6 +86,9 @@ let
           selected = {
             ${key} = target;
           };
+          modules = (import ./modules.nix { inherit pkgs lib; }) {
+            inherit target toolchain usageFor;
+          };
           targetNinja = (import ./ninja.nix { inherit pkgs; }) {
             inherit
               toolchain
@@ -96,11 +99,14 @@ let
               objcFlags
               objcxxFlags
               exeSuffix
+              modules
               ;
             expandedTargets = selected;
             executables = lib.filterAttrs (_: t: t.type == "executable") selected;
             allTargets = [ target ];
             inherit (sources) pathFor;
+            dependencyModulePath = dep:
+              "${targetPackages.${targetAliases.${dep.name}}}/lib/modules/${dep.module.name}.${toolchain.moduleExtension}";
             libraryPathFor =
               dependency: "${targetPackages.${targetAliases.${dependency.name}}}/lib/lib${dependency.name}.a";
           };
@@ -134,6 +140,10 @@ let
           installPhase = ''
             runHook preInstall
             mkdir -p "$out"
+            ${lib.optionalString ((target.module or null) != null) ''
+              mkdir -p "$out/lib/modules"
+              cp "build/modules/${target.module.name}.${toolchain.moduleExtension}" "$out/lib/modules/"
+            ''}
             for directory in bin lib; do
               if [ -d "build/$directory" ]; then
                 mkdir -p "$out/$directory"
@@ -171,6 +181,12 @@ let
                 );
               in
               {
+                moduleFiles = lib.concatMap (t:
+                  if (t.module or null) != null then [ {
+                    inherit (t.module) name;
+                    path = "${targetPackages.${targetAliases.${t.name}}}/lib/modules/${t.module.name}.${toolchain.moduleExtension}";
+                  } ] else t.moduleFiles or [ ]
+                ) (lib.unique exported);
                 includes = [
                   "${projectDrv}/include"
                 ]

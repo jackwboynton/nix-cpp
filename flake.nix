@@ -21,6 +21,7 @@
         "duckdb"
         "external-dependencies"
         "libraries"
+        "modules"
         "link_order"
         "objective_c"
       ];

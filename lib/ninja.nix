@@ -12,6 +12,7 @@
   objcFlags,
   objcxxFlags,
   exeSuffix,
+  modules,
   pathFor ? (path: if builtins.isPath path then "${path}" else toString path),
   libraryPathFor ? (target: "build/lib/lib${target.name}.a"),
 }:
@@ -105,6 +106,26 @@ let
 
   objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
+  compileDeps = target: entries:
+    let
+      paths = map (m: m.path) entries
+        ++ lib.optional (pkgConfigFor target != [ ]) (pkgConfigFile "cflags" target);
+    in lib.optionalString (paths != [ ]) " | ${lib.concatStringsSep " " paths}";
+
+
+  moduleRule = target: lib.optionalString (modules.hasModule target) (
+    let
+      imports = modules.moduleInputs target false;
+      bmi = modules.localModulePath target;
+      isGcc = toolchain.stdenv.cc.isGNU or false;
+      mappings = if isGcc then modules.moduleInputs target true else imports;
+    in ''
+      build ${modules.moduleObject target} | ${bmi}: compile_module ${pathString target.module.source}${compileDeps target imports} || build/obj/${target.name} build/modules
+        interface_flags = ${if isGcc then "-x c++" else "-x c++-module -fmodules-embed-all-files -fmodule-output=${bmi}"}
+        flags = ${compileFlags} ${cxxFlags} ${flagsFor target} ${modules.moduleFlags mappings}
+    ''
+  );
+
   outputFor =
     target:
     if target.type == "library" then
@@ -119,6 +140,7 @@ let
         i: source:
         let
           path = pathString source;
+          imports = if lib.hasSuffix ".m" path then [ ] else modules.moduleInputs target true;
           languageFlags =
             if lib.hasSuffix ".mm" path then
               "${cxxFlags} ${objcxxFlags}"
@@ -128,8 +150,8 @@ let
               cxxFlags;
         in
         ''
-          build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target} || build/obj/${target.name}
-            flags = ${compileFlags} ${languageFlags} ${flagsFor target}
+          build build/obj/${target.name}/${toString i}.o: compile ${path}${compileDeps target imports} || build/obj/${target.name}
+            flags = ${compileFlags} ${languageFlags} ${flagsFor target} ${modules.moduleFlags imports}
         ''
       ) target.sources
     );
@@ -156,7 +178,7 @@ let
         ) assets
       );
 
-      inputs = objectsFor target ++ (if target.type == "executable" then libraries else [ ]);
+      inputs = objectsFor target ++ lib.optional (modules.hasModule target) (modules.moduleObject target) ++ (if target.type == "executable" then libraries else [ ]);
       assetDependency = if target.type == "executable" && assets != [ ] then " || ${assetStamp}" else "";
       assetRule =
         if target.type != "executable" || assets == [ ] then
@@ -171,6 +193,7 @@ let
     in
     ''
       ${pkgConfigRule target}
+      ${moduleRule target}
       ${compileRules target}
       ${assetRule}
 
@@ -212,6 +235,12 @@ let
           depfile = $out.d
           deps = gcc
 
+        rule compile_module
+          command = $cxx $flags $interface_flags -MMD -MF $out.d -c $in -o $out
+          description = CXX_MODULE $in
+          depfile = $out.d
+          deps = gcc
+
         rule archive
           command = mkdir -p $$(dirname $out) && ${archiveCommand} rcs $out $in
           description = AR $out
@@ -224,6 +253,7 @@ let
           command = mkdir -p $$(dirname $out) build/bin && $copies && touch $out
           description = COPY_ASSETS $out
 
+        ${lib.optionalString (lib.any modules.hasModule allTargets) "build build/modules: mkdir"}
         build always_assets: phony
 
         ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
@@ -239,7 +269,7 @@ in
   inherit ninjaFile;
   compdbDependencies = map (pkgConfigFile "cflags") (
     lib.filter (target: pkgConfigFor target != [ ]) allTargets
-  );
+  ) ++ map modules.localModulePath (lib.filter modules.hasModule allTargets);
 
   # Configure Ninja from the active toolchain for both builds and Ninja tools.
   command = pkgs.buildPackages.writeShellScript "cpp-ninja" ''
