@@ -86,9 +86,6 @@ let
           selected = {
             ${key} = target;
           };
-          modules = (import ./modules.nix { inherit pkgs lib; }) {
-            inherit target toolchain usageFor;
-          };
           targetNinja = (import ./ninja.nix { inherit pkgs; }) {
             inherit
               toolchain
@@ -99,7 +96,6 @@ let
               objcFlags
               objcxxFlags
               exeSuffix
-              modules
               ;
             expandedTargets = selected;
             executables = lib.filterAttrs (_: t: t.type == "executable") selected;

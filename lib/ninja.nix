@@ -12,9 +12,9 @@
   objcFlags,
   objcxxFlags,
   exeSuffix,
-  modules,
   pathFor ? (path: if builtins.isPath path then "${path}" else toString path),
   libraryPathFor ? (target: "build/lib/lib${target.name}.a"),
+  dependencyModulePath ? (dep: "build/modules/${dep.module.name}.${toolchain.moduleExtension}"),
 }:
 
 let
@@ -112,6 +112,9 @@ let
         ++ lib.optional (pkgConfigFor target != [ ]) (pkgConfigFile "cflags" target);
     in lib.optionalString (paths != [ ]) " | ${lib.concatStringsSep " " paths}";
 
+  modules = (import ./modules.nix { inherit pkgs lib; }) {
+    inherit toolchain usageFor dependencyModulePath;
+  };
 
   moduleRule = target: lib.optionalString (modules.hasModule target) (
     let
@@ -120,7 +123,7 @@ let
       isGcc = toolchain.stdenv.cc.isGNU or false;
       mappings = if isGcc then modules.moduleInputs target true else imports;
     in ''
-      build ${modules.moduleObject target} | ${bmi}: compile_module ${pathString target.module.source}${compileDeps target imports} || build/obj/${target.name} build/modules
+      build ${modules.moduleObject target} | ${bmi}: compile_module ${pathString target.module.source}${compileDeps target imports}
         interface_flags = ${if isGcc then "-x c++" else "-x c++-module -fmodules-embed-all-files -fmodule-output=${bmi}"}
         flags = ${compileFlags} ${cxxFlags} ${flagsFor target} ${modules.moduleFlags mappings}
     ''
@@ -150,7 +153,7 @@ let
               cxxFlags;
         in
         ''
-          build build/obj/${target.name}/${toString i}.o: compile ${path}${compileDeps target imports} || build/obj/${target.name}
+          build build/obj/${target.name}/${toString i}.o: compile ${path}${compileDeps target imports}
             flags = ${compileFlags} ${languageFlags} ${flagsFor target} ${modules.moduleFlags imports}
         ''
       ) target.sources
@@ -225,10 +228,6 @@ let
           command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && { if [ -z "$compile_modules" ]; then :; else "$''${PKG_CONFIG:-pkg-config}" --cflags $compile_modules; fi; } > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
           description = PKG_CONFIG $modules
 
-        rule mkdir
-          command = mkdir -p $out
-          description = MKDIR $out
-
         rule compile
           command = $cxx $flags -MMD -MF $out.d -c $in -o $out
           description = CXX $in
@@ -253,12 +252,10 @@ let
           command = mkdir -p $$(dirname $out) build/bin && $copies && touch $out
           description = COPY_ASSETS $out
 
-        ${lib.optionalString (lib.any modules.hasModule allTargets) "build build/modules: mkdir"}
         build always_assets: phony
 
         ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
 
-        ${lib.concatStringsSep "\n" (lib.map (target: "build build/obj/${target.name}: mkdir") allTargets)}
 
         default ${
           lib.concatStringsSep " " (map outputFor (lib.filter (t: t.type != "external") allTargets))

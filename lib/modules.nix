@@ -1,14 +1,13 @@
 { pkgs, lib }:
 
 {
-  target,
   toolchain,
-  usageFor
+  usageFor,
+  dependencyModulePath
 }:
 
 rec {
 
-  dependencyModulePath = (target: "build/modules/${target.module.name}.${toolchain.moduleExtension}");
   hasModule = target: (target.module or null) != null;
   localModulePath = target: "build/modules/${target.module.name}.${toolchain.moduleExtension}";
   # Each module interface is built in its owning target. An ordinary source
