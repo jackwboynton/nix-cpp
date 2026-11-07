@@ -112,6 +112,35 @@ let
     else
       "build/bin/${target.name}${exeSuffix}";
 
+  isCxxSource =
+    source:
+    lib.any (ext: lib.hasSuffix ext (pathString source)) [
+      ".cpp"
+      ".cc"
+      ".cxx"
+      ".c++"
+      ".cp"
+      ".C"
+    ];
+  hasPch = target: (target.pch or null) != null && lib.any isCxxSource target.sources;
+  pchFile = target: "build/obj/${target.name}/pch.hpp.gch";
+  pchFlags =
+    target:
+    if toolchain.stdenv.cc.isClang or false then
+      "-include-pch ${pchFile target}"
+    else if toolchain.stdenv.cc.isGNU or false then
+      # GCC finds the .gch before the absent header; never silently fall back.
+      "-Werror=invalid-pch -include ${lib.removeSuffix ".gch" (pchFile target)}"
+    else
+      throw "nix-cpp: PCH is supported only with Clang or GCC";
+
+  pchRule =
+    target:
+    lib.optionalString (hasPch target) ''
+      build ${pchFile target}: precompile ${pathString target.pch}${pkgConfigDependency "cflags" target} || build/obj/${target.name}
+        flags = ${compileFlags} ${cxxFlags} ${flagsFor target}
+    '';
+
   compileRules =
     target:
     lib.concatStringsSep "\n" (
@@ -119,6 +148,10 @@ let
         i: source:
         let
           path = pathString source;
+          usePch = hasPch target && isCxxSource source;
+          implicitInputs =
+            lib.optional (pkgConfigFor target != [ ]) (pkgConfigFile "cflags" target)
+            ++ lib.optional usePch (pchFile target);
           languageFlags =
             if lib.hasSuffix ".mm" path then
               "${cxxFlags} ${objcxxFlags}"
@@ -128,8 +161,10 @@ let
               cxxFlags;
         in
         ''
-          build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target} || build/obj/${target.name}
-            flags = ${compileFlags} ${languageFlags} ${flagsFor target}
+          build build/obj/${target.name}/${toString i}.o: compile ${path}${
+            lib.optionalString (implicitInputs != [ ]) " | ${lib.concatStringsSep " " implicitInputs}"
+          } || build/obj/${target.name}
+            flags = ${compileFlags} ${languageFlags} ${flagsFor target}${lib.optionalString usePch " ${pchFlags target}"}
         ''
       ) target.sources
     );
@@ -171,6 +206,7 @@ let
     in
     ''
       ${pkgConfigRule target}
+      ${pchRule target}
       ${compileRules target}
       ${assetRule}
 
@@ -212,6 +248,12 @@ let
           depfile = $out.d
           deps = gcc
 
+        rule precompile
+          command = $cxx $flags -MMD -MF $out.d -x c++-header -c $in -o $out
+          description = PCH $in
+          depfile = $out.d
+          deps = gcc
+
         rule archive
           command = mkdir -p $$(dirname $out) && ${archiveCommand} rcs $out $in
           description = AR $out
@@ -237,9 +279,9 @@ let
 in
 {
   inherit ninjaFile;
-  compdbDependencies = map (pkgConfigFile "cflags") (
-    lib.filter (target: pkgConfigFor target != [ ]) allTargets
-  );
+  compdbDependencies =
+    map (pkgConfigFile "cflags") (lib.filter (target: pkgConfigFor target != [ ]) allTargets)
+    ++ map pchFile (lib.filter hasPch allTargets);
 
   # Configure Ninja from the active toolchain for both builds and Ninja tools.
   command = pkgs.buildPackages.writeShellScript "cpp-ninja" ''

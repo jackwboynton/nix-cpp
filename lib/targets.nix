@@ -19,6 +19,7 @@ let
       pkgConfig ? [ ],
       linkLibraries ? [ ],
       testSources ? [ ],
+      pch ? null,
       assets ? [ ],
     }:
     let
@@ -47,6 +48,7 @@ let
       pkgConfig = args.pkgConfig or [ ];
       linkLibraries = args.linkLibraries or [ ];
       testSources = args.testSources or [ ];
+      pch = args.pch or null;
     }
     // lib.optionalAttrs (type == "executable") {
       assets = args.assets or [ ];
