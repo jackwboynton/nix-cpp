@@ -63,7 +63,10 @@ in
   linkFlags = [ optimizationFlag ] ++ ltoFlags;
 
   # GCC's wrappers load the compiler's LTO plugin when handling archives.
-  archiveTool = if lto && isGcc then "gcc-ar" else "ar";
+  archiveTool =
+    if lto && isGcc then "gcc-ar"
+    else if lto && isClang && isDarwin then "llvm-ar"
+    else "ar";
   ranlibTool = if lto && isGcc then "gcc-ranlib" else "ranlib";
 
   languageDefaults = {
