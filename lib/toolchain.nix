@@ -50,7 +50,7 @@ let
   stdenv = pkgs.overrideCC base selectedCC;
 in
 {
-  inherit stdenv;
+  inherit stdenv archiveToolPath;
   moduleExtension =
     if isGcc then
       "gcm"
@@ -67,6 +67,7 @@ in
     if lto && isGcc then "gcc-ar"
     else if lto && isClang && isDarwin then "llvm-ar"
     else "ar";
+  archiveToolPath ? null,
   ranlibTool = if lto && isGcc then "gcc-ranlib" else "ranlib";
 
   languageDefaults = {

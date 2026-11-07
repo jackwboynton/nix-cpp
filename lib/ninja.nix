@@ -26,8 +26,8 @@ let
   archiveCommand =
     if toolchain.archiveTool == "gcc-ar" then
       lib.escapeShellArg "${lib.getBin toolchain.stdenv.cc.cc}/bin/${toolchain.stdenv.cc.targetPrefix}gcc-ar"
-    else if toolchain.archiveTool == "llvm-ar" then
-      lib.escapeShellArg "${lib.getBin toolchain.stdenv.cc.cc.llvmPackages.llvm}/bin/llvm-ar"
+    else if toolchain.archiveToolPath != null then
+      lib.escapeShellArg toolchain.archiveToolPath
     else
       "$$AR";
 
