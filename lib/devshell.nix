@@ -13,7 +13,7 @@
 let
   inherit (pkgs) lib;
 
-  iwyu = pkgs.buildPackages.include-what-you-use.overrideAttrs (old: {
+  iwyu = pkgs.pkgsBuildBuild.include-what-you-use.overrideAttrs (old: {
     postInstall = (old.postInstall or "") + ''
       # Nix's C++ header flags use -cxx-isystem, which IWYU's wrapper ignores.
       substituteInPlace $out/bin/include-what-you-use \
