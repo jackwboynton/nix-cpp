@@ -155,7 +155,15 @@ let
             interface_flags = ${
               if isGcc then "-x c++" else "-x c++-module -fmodules-embed-all-files -fmodule-output=${bmi}"
             }
-            flags = ${compileFlags} ${cxxFlags} ${flagsFor target} ${modules.moduleFlags mappings}
+            flags = ${compileFlags} ${cxxFlags} ${flagsFor target} ${modules.moduleFlags mappings}${
+              lib.optionalString (
+                !isGcc
+                && lib.elem module.name [
+                  "std"
+                  "std.compat"
+                ]
+              ) " -Wno-reserved-module-identifier"
+            }
         ''
       ) (target.modules or [ ])
     );

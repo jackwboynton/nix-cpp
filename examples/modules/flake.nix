@@ -19,6 +19,10 @@
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      exampleSource = nixpkgs.lib.cleanSourceWith {
+        src = ./.;
+        filter = path: _: builtins.baseNameOf path != "build";
+      };
 
       projects = forAllSystems (
         system:
@@ -28,10 +32,26 @@
         in
         cpp.project {
           name = "modules";
-          src = ./.;
-          cxxFlags = "-std=c++23";
+          src = exampleSource;
+          cxxFlags = "-std=c++23 -Wall -Wextra -Werror";
 
           targets = rec {
+            stdLibrary = cpp.library {
+              name = "std-library";
+              sources = [ ];
+              module = {
+                name = "std";
+                source =
+                  if pkgs.stdenv.cc.isGNU or false then
+                    "${pkgs.stdenv.cc.cc}/include/c++/${pkgs.stdenv.cc.version}/bits/std.cc"
+                  else
+                    "${
+                      pkgs."llvmPackages_${nixpkgs.lib.versions.major pkgs.stdenv.cc.libcxx.version}".libcxx
+                    }/share/libc++/v1/std.cppm";
+              };
+              testSources = [ "std-main.cpp" ];
+            };
+
             base = cpp.library {
               name = "base";
               sources = [ ];
@@ -88,12 +108,19 @@
           cpp = nix-cpp.lib.mkCpp pkgs;
           consumer = cpp.project {
             name = "modules-consumer";
-            src = ./.;
+            src = exampleSource;
             cxxFlags = "-std=c++23";
-            targets.app = cpp.executable {
-              name = "app";
-              sources = [ "main.cpp" ];
-              private.dependencies = [ modules ];
+            targets = {
+              app = cpp.executable {
+                name = "app";
+                sources = [ "main.cpp" ];
+                private.dependencies = [ modules ];
+              };
+              stdApp = cpp.executable {
+                name = "std-app";
+                sources = [ "std-main.cpp" ];
+                private.dependencies = [ modules ];
+              };
             };
           };
           rejects = args: !(builtins.tryEval (builtins.deepSeq (cpp.library args) true)).success;
@@ -106,19 +133,26 @@
           runtime = pkgs.runCommand "check-modules" { } ''
             ${modules}/bin/app
             ${modules}/bin/views-tests
+            ${modules}/bin/std-library-tests
             touch "$out"
           '';
-          installed-consumer = pkgs.runCommandCC "check-installed-modules" {
-            nativeBuildInputs = consumer.devShell.nativeBuildInputs;
-          } ''
-            ${consumer}/bin/app
-            cp ${./main.cpp} main.cpp
-            export CXX=${pkgs.stdenv.cc}/bin/c++
-            compdb
-            build -j4 app
-            build/bin/app
-            touch "$out"
-          '';
+          installed-consumer =
+            pkgs.runCommandCC "check-installed-modules"
+              {
+                nativeBuildInputs = consumer.devShell.nativeBuildInputs;
+              }
+              ''
+                ${consumer}/bin/app
+                ${consumer}/bin/std-app
+                cp ${./main.cpp} main.cpp
+                cp ${./std-main.cpp} std-main.cpp
+                export CXX=${pkgs.stdenv.cc}/bin/c++
+                compdb
+                build -j4 app stdApp
+                build/bin/app
+                build/bin/std-app
+                touch "$out"
+              '';
           validation =
             assert rejects {
               name = "invalid";
@@ -169,12 +203,16 @@
                 cp ${./traits.cppm} traits.cppm
                 cp ${./ui.cppm} ui.cppm
                 cp ${./main.cpp} main.cpp
+                cp ${./std-main.cpp} std-main.cpp
                 export CXX=${pkgs.stdenv.cc}/bin/c++
                 compdb
-                jq -e 'map(.file) | unique | sort == ["base.cppm", "main.cpp", "theme.cppm", "traits.cppm", "ui.cppm"]' compile_commands.json
-                build -j4 app views-tests
+                jq -e 'map(.file | split("/") | last) | unique | sort == (["base.cppm", "main.cpp", "std-main.cpp", "${
+                  if pkgs.stdenv.cc.isGNU or false then "std.cc" else "std.cppm"
+                }", "theme.cppm", "traits.cppm", "ui.cppm"] | sort)' compile_commands.json
+                build -j4 app views-tests std-library-tests
                 build/bin/app
                 build/bin/views-tests
+                build/bin/std-library-tests
                 touch "$out"
               '';
         }
