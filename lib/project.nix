@@ -74,6 +74,14 @@ let
 
       inherit (ninja) ninjaFile;
 
+      moduleSupport = (import ./modules.nix { inherit pkgs lib; }) {
+        inherit toolchain usageFor;
+        dependencyModulePath = installedModulePath;
+      };
+      installedModulePath =
+        target: module:
+        "${targetPackages.${targetAliases.${target.name}}}/lib/modules/${moduleSupport.moduleFile module}";
+
       exeSuffix = pkgs.stdenv.hostPlatform.extensions.executable or "";
 
       sources = (import ./sources.nix { inherit lib; }) {
@@ -101,6 +109,7 @@ let
             executables = lib.filterAttrs (_: t: t.type == "executable") selected;
             allTargets = [ target ];
             inherit (sources) pathFor;
+            dependencyModulePath = installedModulePath;
             libraryPathFor =
               dependency: "${targetPackages.${targetAliases.${dependency.name}}}/lib/lib${dependency.name}.a";
           };
@@ -134,6 +143,10 @@ let
           installPhase = ''
             runHook preInstall
             mkdir -p "$out"
+            ${lib.optionalString ((target.modules or [ ]) != [ ]) ''
+              mkdir -p "$out/lib/modules"
+              cp ${lib.escapeShellArgs (map moduleSupport.localModulePath target.modules)} "$out/lib/modules/"
+            ''}
             for directory in bin lib; do
               if [ -d "build/$directory" ]; then
                 mkdir -p "$out/$directory"
@@ -171,6 +184,16 @@ let
                 );
               in
               {
+                moduleFiles = lib.concatMap (
+                  t:
+                  if (t.modules or [ ]) != [ ] then
+                    map (module: {
+                      inherit (module) name;
+                      path = installedModulePath t module;
+                    }) t.modules
+                  else
+                    t.moduleFiles or [ ]
+                ) (lib.unique exported);
                 includes = [
                   "${projectDrv}/include"
                 ]

@@ -14,6 +14,7 @@
   exeSuffix,
   pathFor ? (path: if builtins.isPath path then "${path}" else toString path),
   libraryPathFor ? (target: "build/lib/lib${target.name}.a"),
+  dependencyModulePath ? (_dep: module: "build/modules/${module.name}.${toolchain.moduleExtension}"),
 }:
 
 let
@@ -25,6 +26,8 @@ let
   archiveCommand =
     if toolchain.archiveTool == "gcc-ar" then
       lib.escapeShellArg "${lib.getBin toolchain.stdenv.cc.cc}/bin/${toolchain.stdenv.cc.targetPrefix}gcc-ar"
+    else if toolchain.archiveTool == "llvm-ar" then
+      lib.escapeShellArg "${lib.getBin pkgs.buildPackages."llvmPackages_${lib.versions.major toolchain.stdenv.cc.cc.version}".llvm}/bin/llvm-ar"
     else
       "$$AR";
 
@@ -105,6 +108,68 @@ let
 
   objectsFor = target: lib.imap0 (i: _: "build/obj/${target.name}/${toString i}.o") target.sources;
 
+  compileDeps =
+    target: entries:
+    let
+      paths =
+        lib.unique (
+          lib.concatMap (
+            m: [ m.path ] ++ lib.optional (toolchain.stdenv.cc.isGNU or false) (modules.localModulePath m)
+          ) entries
+        )
+        ++ lib.optional (pkgConfigFor target != [ ]) (pkgConfigFile "cflags" target);
+    in
+    lib.optionalString (paths != [ ]) " | ${lib.concatStringsSep " " paths}";
+
+  modules = (import ./modules.nix { inherit pkgs lib; }) {
+    inherit toolchain usageFor dependencyModulePath;
+  };
+
+  # GCC records relative paths to sibling BMIs; restore those paths for installed dependencies.
+  stagedModules =
+    if toolchain.stdenv.cc.isGNU or false then
+      lib.unique (
+        lib.concatMap (
+          target: lib.filter (m: m.path != modules.localModulePath m) (modules.moduleInputs target [ ])
+        ) allTargets
+      )
+    else
+      [ ];
+
+  moduleRules =
+    target:
+    lib.concatStringsSep "\n" (
+      lib.imap0 (
+        i: module:
+        let
+          imports = modules.moduleInputs target (lib.take i target.modules);
+          bmi = modules.localModulePath module;
+          isGcc = toolchain.stdenv.cc.isGNU or false;
+          mappings =
+            imports
+            ++ lib.optional isGcc {
+              inherit (module) name;
+              path = bmi;
+            };
+        in
+        ''
+          build ${modules.moduleObject target i} | ${bmi}: compile_module ${pathString module.source}${compileDeps target imports}
+            interface_flags = ${
+              if isGcc then "-x c++" else "-x c++-module -fmodules-embed-all-files -fmodule-output=${bmi}"
+            }
+            flags = ${compileFlags} ${cxxFlags} ${flagsFor target} ${modules.moduleFlags mappings}${
+              lib.optionalString (
+                !isGcc
+                && lib.elem module.name [
+                  "std"
+                  "std.compat"
+                ]
+              ) " -Wno-reserved-module-identifier"
+            }
+        ''
+      ) (target.modules or [ ])
+    );
+
   outputFor =
     target:
     if target.type == "library" then
@@ -119,6 +184,8 @@ let
         i: source:
         let
           path = pathString source;
+          imports =
+            if lib.hasSuffix ".m" path then [ ] else modules.moduleInputs target (target.modules or [ ]);
           languageFlags =
             if lib.hasSuffix ".mm" path then
               "${cxxFlags} ${objcxxFlags}"
@@ -128,8 +195,8 @@ let
               cxxFlags;
         in
         ''
-          build build/obj/${target.name}/${toString i}.o: compile ${path}${pkgConfigDependency "cflags" target} || build/obj/${target.name}
-            flags = ${compileFlags} ${languageFlags} ${flagsFor target}
+          build build/obj/${target.name}/${toString i}.o: compile ${path}${compileDeps target imports}
+            flags = ${compileFlags} ${languageFlags} ${flagsFor target} ${modules.moduleFlags imports}
         ''
       ) target.sources
     );
@@ -156,7 +223,10 @@ let
         ) assets
       );
 
-      inputs = objectsFor target ++ (if target.type == "executable" then libraries else [ ]);
+      inputs =
+        objectsFor target
+        ++ lib.imap0 (i: _: modules.moduleObject target i) (target.modules or [ ])
+        ++ (if target.type == "executable" then libraries else [ ]);
       assetDependency = if target.type == "executable" && assets != [ ] then " || ${assetStamp}" else "";
       assetRule =
         if target.type != "executable" || assets == [ ] then
@@ -171,6 +241,7 @@ let
     in
     ''
       ${pkgConfigRule target}
+      ${moduleRules target}
       ${compileRules target}
       ${assetRule}
 
@@ -202,15 +273,21 @@ let
           command = export PKG_CONFIG_PATH=$pcpath"$''${PKG_CONFIG_PATH:+:$''${PKG_CONFIG_PATH}}" && mkdir -p $$(dirname $cflags) && { if [ -z "$compile_modules" ]; then :; else "$''${PKG_CONFIG:-pkg-config}" --cflags $compile_modules; fi; } > $cflags.tmp && "$''${PKG_CONFIG:-pkg-config}" --libs $modules > $libs.tmp && mv $cflags.tmp $cflags && mv $libs.tmp $libs
           description = PKG_CONFIG $modules
 
-        rule mkdir
-          command = mkdir -p $out
-          description = MKDIR $out
-
         rule compile
           command = $cxx $flags -MMD -MF $out.d -c $in -o $out
           description = CXX $in
           depfile = $out.d
           deps = gcc
+
+        rule compile_module
+          command = $cxx $flags $interface_flags -MMD -MF $out.d -c $in -o $out
+          description = CXX_MODULE $in
+          depfile = $out.d
+          deps = gcc
+
+        rule stage_module
+          command = mkdir -p $$(dirname $out) && ln -sfn "$in" "$out"
+          description = MODULE_PATH $out
 
         rule archive
           command = mkdir -p $$(dirname $out) && ${archiveCommand} rcs $out $in
@@ -226,9 +303,12 @@ let
 
         build always_assets: phony
 
+        ${lib.concatMapStrings (m: ''
+          build ${modules.localModulePath m}: stage_module ${m.path}
+        '') stagedModules}
+
         ${lib.concatStringsSep "\n" (lib.mapAttrsToList targetRules expandedTargets)}
 
-        ${lib.concatStringsSep "\n" (lib.map (target: "build build/obj/${target.name}: mkdir") allTargets)}
 
         default ${
           lib.concatStringsSep " " (map outputFor (lib.filter (t: t.type != "external") allTargets))
@@ -237,9 +317,10 @@ let
 in
 {
   inherit ninjaFile;
-  compdbDependencies = map (pkgConfigFile "cflags") (
-    lib.filter (target: pkgConfigFor target != [ ]) allTargets
-  );
+  compdbDependencies =
+    map (pkgConfigFile "cflags") (lib.filter (target: pkgConfigFor target != [ ]) allTargets)
+    ++ lib.concatMap (target: map modules.localModulePath (target.modules or [ ])) allTargets
+    ++ map modules.localModulePath stagedModules;
 
   # Configure Ninja from the active toolchain for both builds and Ninja tools.
   command = pkgs.buildPackages.writeShellScript "cpp-ninja" ''
