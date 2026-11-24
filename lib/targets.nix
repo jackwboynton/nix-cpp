@@ -13,6 +13,8 @@ let
     args@{
       name,
       sources,
+      module ? null,
+      modules ? [ ],
       public ? { },
       private ? { },
       linkFlags ? [ ],
@@ -25,9 +27,31 @@ let
       public = scope (args.public or { });
       private = scope (args.private or { });
       headers = value: if builtins.isList value then value else [ value ];
+      declaredModules =
+        if module != null && modules != [ ] then
+          throw "cpp.project: use either module or modules, not both"
+        else
+          lib.optional (module != null) module ++ modules;
+      checkedModules = map (
+        m:
+        if type != "library" then
+          throw "cpp.project: only libraries can export modules"
+        else if builtins.match "[a-zA-Z_][a-zA-Z0-9_]*([.][a-zA-Z_][a-zA-Z0-9_]*)*" m.name == null then
+          throw "cpp.project: invalid module name '${m.name}'"
+        else if builtins.elem m.source sources then
+          throw "cpp.project: module.source is already in sources"
+        else
+          m
+      ) declaredModules;
+      moduleNames = map (m: m.name) checkedModules;
     in
     {
       inherit type;
+      modules =
+        if lib.length moduleNames != lib.length (lib.unique moduleNames) then
+          throw "cpp.project: module names must be unique within a target"
+        else
+          checkedModules;
       inherit (args) name sources;
       public = public // {
         includes = public.includes ++ headers public.headers;
@@ -71,6 +95,7 @@ let
     {
       type = "external";
       inherit package;
+      moduleFiles = usage.moduleFiles or [ ];
       includes = (usage.includes or [ ]) ++ includes;
       linkFlags = (usage.linkFlags or [ ]) ++ linkFlags;
       linkLibraries = (usage.linkLibraries or [ ]) ++ linkLibraries;

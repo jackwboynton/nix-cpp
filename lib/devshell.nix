@@ -52,7 +52,7 @@ in
       ${lib.optionalString (compdbDependencies != [ ]) ''
         ${ninjaCommand} ${lib.escapeShellArgs compdbDependencies}
       ''}
-      ${ninjaCommand} -t compdb compile > compile_commands.json
+      ${ninjaCommand} -t compdb compile compile_module > compile_commands.json
     '')
 
     (pkgs.buildPackages.writeShellScriptBin "iwyu" ''
