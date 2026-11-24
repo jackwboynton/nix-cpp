@@ -27,7 +27,10 @@ let
     if toolchain.archiveTool == "gcc-ar" then
       lib.escapeShellArg "${lib.getBin toolchain.stdenv.cc.cc}/bin/${toolchain.stdenv.cc.targetPrefix}gcc-ar"
     else if toolchain.archiveTool == "llvm-ar" then
-      lib.escapeShellArg "${lib.getBin pkgs.buildPackages."llvmPackages_${lib.versions.major toolchain.stdenv.cc.cc.version}".llvm}/bin/llvm-ar"
+      lib.escapeShellArg "${
+        lib.getBin
+          pkgs.buildPackages."llvmPackages_${lib.versions.major toolchain.stdenv.cc.cc.version}".llvm
+      }/bin/llvm-ar"
     else
       "$$AR";
 
@@ -315,8 +318,25 @@ let
         }
       '';
 in
-{
+rec {
   inherit ninjaFile;
+  compdb = pkgs.buildPackages.writeShellScriptBin "compdb" ''
+    set -euo pipefail
+    ${lib.optionalString (compdbDependencies != [ ]) ''
+      ${command} ${lib.escapeShellArgs compdbDependencies}
+    ''}
+    flags=()
+    for file in build/deps/*.cflags.rsp; do
+      if [ -f "$file" ]; then
+        flags+=("@$file" "$(<"$file")")
+      fi
+    done
+    ${command} -t compdb compile compile_module \
+      | ${lib.getExe pkgs.buildPackages.jq} --args '
+          ($ARGS.positional | [range(0; length; 2) as $i | {key: .[$i], value: .[$i+1]}] | from_entries) as $flags
+          | map(.command |= gsub("(?<rsp>@build/deps/[^ ]+[.]cflags[.]rsp)"; $flags[.rsp] // .rsp))
+        ' -- "''${flags[@]}" > compile_commands.json
+  '';
   compdbDependencies =
     map (pkgConfigFile "cflags") (lib.filter (target: pkgConfigFor target != [ ]) allTargets)
     ++ lib.concatMap (target: map modules.localModulePath (target.modules or [ ])) allTargets
