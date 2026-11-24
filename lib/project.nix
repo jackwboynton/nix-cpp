@@ -172,6 +172,25 @@ let
             targets = expandedTargets;
             inherit ninjaFile targetPackages;
 
+            compdb = toolchain.stdenv.mkDerivation {
+              name = "${name}-compdb";
+              inherit src;
+              nativeBuildInputs = [
+                pkgs.buildPackages.pkg-config
+                ninja.compdb
+              ]
+              ++ (projectArgs.nativeBuildInputs or [ ]);
+              buildInputs = externalPackages;
+              strictDeps = true;
+              phases = [ "buildPhase" ];
+              buildPhase = ''
+                mkdir -p "$out"
+                cp -rs "$src"/. "$out"/
+                cd "$out"
+                compdb
+              '';
+            };
+
             # Store paths, not source-tree include paths, form the installed API.
             cppUsage =
               let
@@ -229,7 +248,7 @@ let
                 exeSuffix
                 ;
               ninjaCommand = ninja.command;
-              inherit (ninja) compdbDependencies;
+              inherit (ninja) compdb;
               inherit (toolchain) stdenv;
             };
           };

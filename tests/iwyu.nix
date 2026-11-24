@@ -31,6 +31,15 @@ pkgs.runCommandCC "check-iwyu"
     compdb
     test -s build/deps/app.cflags.rsp
     test ! -e build/obj/app/0.o
+    test -s ${project.compdb}/main.cpp
+    test ! -e ${project.compdb}/build/obj/app/0.o
+    grep -F '"directory": "${project.compdb}"' ${project.compdb}/compile_commands.json
+    for database in compile_commands.json ${project.compdb}/compile_commands.json; do
+      grep -F -- "$(<build/deps/app.cflags.rsp)" "$database"
+      if grep -Fq '@build/deps/app.cflags.rsp' "$database"; then
+        exit 1
+      fi
+    done
     if iwyu main.cpp -- -Xiwyu --error=1 > report.log 2>&1; then
       echo "iwyu failed to report the unused include" >&2
       exit 1

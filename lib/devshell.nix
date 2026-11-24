@@ -5,7 +5,7 @@
   executables,
   externalPackages,
   ninjaCommand,
-  compdbDependencies,
+  compdb,
   exeSuffix,
   stdenv ? pkgs.stdenv,
 }:
@@ -47,13 +47,7 @@ in
       ${ninjaCommand} "$target" && exec "$executable" "$@"
     '')
 
-    (pkgs.buildPackages.writeShellScriptBin "compdb" ''
-      set -e
-      ${lib.optionalString (compdbDependencies != [ ]) ''
-        ${ninjaCommand} ${lib.escapeShellArgs compdbDependencies}
-      ''}
-      ${ninjaCommand} -t compdb compile compile_module > compile_commands.json
-    '')
+    compdb
 
     (pkgs.buildPackages.writeShellScriptBin "iwyu" ''
       if [ ! -f compile_commands.json ]; then
